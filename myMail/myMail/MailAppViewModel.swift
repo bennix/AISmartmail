@@ -162,6 +162,9 @@ final class MailAppViewModel: ObservableObject {
                 persistenceStatus = "本地缓存读取失败，已加载演示数据：\(error.localizedDescription)"
             }
         }
+        if Self.repairDuplicateMailboxIDs(in: &snapshot), let mailStore {
+            try? mailStore.saveSnapshot(snapshot)
+        }
 
         self.accounts = snapshot.accounts
         self.mailboxes = snapshot.mailboxes
@@ -189,6 +192,31 @@ final class MailAppViewModel: ObservableObject {
         if let persistenceStatus {
             statusMessage = persistenceStatus
         }
+    }
+
+    private static func repairDuplicateMailboxIDs(in snapshot: inout MailStoreSnapshot) -> Bool {
+        var seenMailboxIDs: Set<UUID> = []
+        var remappedMailboxIDsByAccount: [UUID: [UUID: UUID]] = [:]
+        var didChange = false
+
+        for index in snapshot.mailboxes.indices {
+            let mailbox = snapshot.mailboxes[index]
+            guard !seenMailboxIDs.insert(mailbox.id).inserted else { continue }
+            let replacementID = UUID()
+            remappedMailboxIDsByAccount[mailbox.accountId, default: [:]][mailbox.id] = replacementID
+            snapshot.mailboxes[index].id = replacementID
+            didChange = true
+        }
+
+        guard didChange else { return false }
+
+        for index in snapshot.messages.indices {
+            let message = snapshot.messages[index]
+            if let replacementID = remappedMailboxIDsByAccount[message.accountId]?[message.mailboxId] {
+                snapshot.messages[index].mailboxId = replacementID
+            }
+        }
+        return true
     }
 
     private func normalizeBuiltInProviderEndpoints() {

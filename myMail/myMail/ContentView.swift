@@ -60,7 +60,7 @@ private struct AccountSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            List(selection: $viewModel.selectedMailboxID) {
+            List {
                 Section(viewModel.localized(.smartMailboxes)) {
                     Button {
                         viewModel.selectSmartMailbox(.starred)
@@ -89,6 +89,9 @@ private struct AccountSidebar: View {
                 ForEach(viewModel.accounts) { account in
                     Section(account.displayName) {
                         ForEach(viewModel.mailboxes.filter { $0.accountId == account.id }) { mailbox in
+                            let isSelected = viewModel.selectedSmartMailbox == nil
+                                && viewModel.selectedAccountID == account.id
+                                && viewModel.selectedMailboxID == mailbox.id
                             Button {
                                 viewModel.selectMailbox(mailbox)
                             } label: {
@@ -107,8 +110,10 @@ private struct AccountSidebar: View {
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
+                                .foregroundStyle(isSelected ? .white : .primary)
                             }
                             .buttonStyle(.plain)
+                            .listRowBackground(isSelected ? Color.accentColor : Color.clear)
                             .tag(mailbox.id)
                         }
                     }

@@ -1206,6 +1206,50 @@ struct myMailTests {
     }
 
     @MainActor
+    @Test func duplicateMailboxIDsAreRepairedAcrossAccounts() async throws {
+        var firstAccount = MailAccount.demo()
+        firstAccount.id = UUID()
+        firstAccount.emailAddress = "first@example.com"
+        var secondAccount = MailAccount.demo()
+        secondAccount.id = UUID()
+        secondAccount.emailAddress = "second@example.com"
+        let sharedInboxID = UUID()
+        let firstInbox = Mailbox(id: sharedInboxID, accountId: firstAccount.id, name: "INBOX", role: .inbox, uidValidity: 1, unreadCount: 0)
+        let secondInbox = Mailbox(id: sharedInboxID, accountId: secondAccount.id, name: "INBOX", role: .inbox, uidValidity: 1, unreadCount: 0)
+        var firstMessage = MailMessage.demoMessages(accountId: firstAccount.id, inboxId: sharedInboxID)[0]
+        firstMessage.messageId = "<first@example.com>"
+        var secondMessage = MailMessage.demoMessages(accountId: secondAccount.id, inboxId: sharedInboxID)[0]
+        secondMessage.id = UUID()
+        secondMessage.messageId = "<second@example.com>"
+        let store = MemoryMailStore(snapshot: MailStoreSnapshot(
+            accounts: [firstAccount, secondAccount],
+            mailboxes: [firstInbox, secondInbox],
+            messages: [firstMessage, secondMessage],
+            attachments: []
+        ))
+
+        let viewModel = MailAppViewModel(
+            secretStore: MemorySecretStore(),
+            mailStore: store,
+            settingsStore: MemorySettingsStore(),
+            mailService: StubMailService(body: MessageBody(plain: "", html: nil, attachments: [])),
+            aiService: StubAIService(chunks: []),
+            vectorStore: InMemoryVectorStore(),
+            embeddingService: LocalNLEmbeddingService(),
+            autoBootstrapEmbeddings: false
+        )
+
+        let repairedFirstInbox = try #require(viewModel.mailboxes.first { $0.accountId == firstAccount.id && $0.role == .inbox })
+        let repairedSecondInbox = try #require(viewModel.mailboxes.first { $0.accountId == secondAccount.id && $0.role == .inbox })
+        #expect(repairedFirstInbox.id == sharedInboxID)
+        #expect(repairedSecondInbox.id != sharedInboxID)
+        #expect(repairedFirstInbox.id != repairedSecondInbox.id)
+        #expect(viewModel.messages.first { $0.accountId == firstAccount.id }?.mailboxId == repairedFirstInbox.id)
+        #expect(viewModel.messages.first { $0.accountId == secondAccount.id }?.mailboxId == repairedSecondInbox.id)
+        #expect(Set(store.savedSnapshots.last?.mailboxes.map(\.id) ?? []).count == 2)
+    }
+
+    @MainActor
     @Test func pop3PollingUsesSeparateMailServicesPerAccount() async throws {
         let preset = ProviderPreset.preset(for: .gmail)
         var firstAccount = MailAccount.demo()
