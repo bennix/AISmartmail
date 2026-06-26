@@ -2894,6 +2894,10 @@ enum AppText: String, CaseIterable {
     case save
     case oauthClientID
     case oauthAccessToken
+    case oauthAdvancedTitle
+    case oauthAdvancedHelp
+    case oauthClientIDNotEmail
+    case oauthAccessTokenNotAppPassword
     case gmailAppPassword
     case gmailAppPasswordGuideTitle
     case gmailAppPasswordGuideSteps
@@ -3445,6 +3449,10 @@ struct AppLocalizer {
             .save: "保存",
             .oauthClientID: "OAuth Client ID",
             .oauthAccessToken: "OAuth2 access token",
+            .oauthAdvancedTitle: "高级 OAuth2 登录（可选）",
+            .oauthAdvancedHelp: "普通收发请填写上面的邮箱地址和 Gmail 应用专用密码。这里仅用于已有 OAuth Client ID / token 的开发者配置。",
+            .oauthClientIDNotEmail: "OAuth Client ID（不是邮箱地址）",
+            .oauthAccessTokenNotAppPassword: "OAuth2 access token（不是应用专用密码）",
             .gmailAppPassword: "Gmail 应用专用密码（16 位）",
             .gmailAppPasswordGuideTitle: "Gmail 不能直接使用 Google 登录密码",
             .gmailAppPasswordGuideSteps: "请先在 Google 账号开启两步验证，然后打开“应用专用密码”，创建一个用于邮件客户端的 16 位密码，并把它粘贴到这里。",
@@ -3648,6 +3656,10 @@ struct AppLocalizer {
             .save: "Save",
             .oauthClientID: "OAuth Client ID",
             .oauthAccessToken: "OAuth2 access token",
+            .oauthAdvancedTitle: "Advanced OAuth2 Login (optional)",
+            .oauthAdvancedHelp: "For normal mail access, fill the email address and Gmail app password above. This section is only for developer setups with an OAuth Client ID or token.",
+            .oauthClientIDNotEmail: "OAuth Client ID (not email address)",
+            .oauthAccessTokenNotAppPassword: "OAuth2 access token (not app password)",
             .gmailAppPassword: "Gmail app password (16 digits)",
             .gmailAppPasswordGuideTitle: "Gmail cannot use your normal Google password",
             .gmailAppPasswordGuideSteps: "Enable 2-Step Verification in your Google Account, open App Passwords, create a 16-digit password for a mail client, then paste it here.",

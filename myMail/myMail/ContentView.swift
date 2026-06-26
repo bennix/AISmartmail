@@ -953,6 +953,7 @@ struct SettingsView: View {
     @State private var accountEmail = ""
     @State private var accountPassword = ""
     @State private var accountOAuthToken = ""
+    @State private var showsOAuthAdvanced = false
     @State private var customIMAPHost = ""
     @State private var customIMAPPort = 993
     @State private var customIMAPTLS = "SSL"
@@ -1036,6 +1037,8 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .onChange(of: accountProvider) { _, newProvider in
                     accountProtocol = .imap
+                    accountOAuthToken = ""
+                    showsOAuthAdvanced = false
                     testedAccountSignature = nil
                     accountConnectionFeedback = nil
                     if newProvider == .gmail {
@@ -1114,42 +1117,51 @@ struct SettingsView: View {
                 }
 
                 if preset.supportsOAuth2 {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            TextField(viewModel.localized(.oauthClientID), text: oauthClientIDBinding)
-                            Button {
-                                if let url = viewModel.startOAuthLogin(
-                                    provider: accountProvider,
-                                    email: accountEmail,
-                                    clientID: oauthClientIDBinding.wrappedValue,
-                                    useProtocol: accountProtocol
-                                ) {
-                                    NSWorkspace.shared.open(url)
+                    DisclosureGroup(isExpanded: $showsOAuthAdvanced) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(viewModel.localized(.oauthAdvancedHelp))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            HStack {
+                                TextField(viewModel.localized(.oauthClientIDNotEmail), text: oauthClientIDBinding)
+                                Button {
+                                    if let url = viewModel.startOAuthLogin(
+                                        provider: accountProvider,
+                                        email: accountEmail,
+                                        clientID: oauthClientIDBinding.wrappedValue,
+                                        useProtocol: effectiveAccountProtocol
+                                    ) {
+                                        NSWorkspace.shared.open(url)
+                                    }
+                                } label: {
+                                    Label(viewModel.localized(.browserLogin), systemImage: "key")
                                 }
-                            } label: {
-                                Label(viewModel.localized(.browserLogin), systemImage: "key")
+                                .disabled(accountEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || oauthClientIDBinding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             }
-                            .disabled(accountEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || oauthClientIDBinding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                        HStack {
-                            SecureField(viewModel.localized(.oauthAccessToken), text: $accountOAuthToken)
-                            if let url = preset.oauthHelpURL {
-                                Link(destination: url) {
-                                    Label(viewModel.localized(.documentation), systemImage: "questionmark.circle")
+                            HStack {
+                                SecureField(viewModel.localized(.oauthAccessTokenNotAppPassword), text: $accountOAuthToken)
+                                if let url = preset.oauthHelpURL {
+                                    Link(destination: url) {
+                                        Label(viewModel.localized(.documentation), systemImage: "questionmark.circle")
+                                    }
                                 }
+                                Button(viewModel.localized(.saveToken)) {
+                                    viewModel.addOAuthAccount(
+                                        provider: accountProvider,
+                                        email: accountEmail,
+                                        oauthToken: accountOAuthToken,
+                                        useProtocol: effectiveAccountProtocol
+                                    )
+                                    accountEmail = ""
+                                    accountOAuthToken = ""
+                                }
+                                .disabled(accountEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || accountOAuthToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             }
-                            Button(viewModel.localized(.saveToken)) {
-                                viewModel.addOAuthAccount(
-                                    provider: accountProvider,
-                                    email: accountEmail,
-                                    oauthToken: accountOAuthToken,
-                                    useProtocol: accountProtocol
-                                )
-                                accountEmail = ""
-                                accountOAuthToken = ""
-                            }
-                            .disabled(accountEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || accountOAuthToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
+                        .padding(.top, 6)
+                    } label: {
+                        Label(viewModel.localized(.oauthAdvancedTitle), systemImage: "slider.horizontal.3")
+                            .font(.caption.weight(.semibold))
                     }
                 }
 
