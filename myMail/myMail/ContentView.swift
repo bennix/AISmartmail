@@ -1029,10 +1029,20 @@ struct SettingsView: View {
                 }
                 .frame(height: accountListHeight)
 
-                LabeledContent(viewModel.localized(.provider)) {
-                    Text(viewModel.localizedProviderTitle(.generic))
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.primary)
+                Picker(viewModel.localized(.provider), selection: $accountProvider) {
+                    Text(viewModel.localizedProviderTitle(.generic)).tag(MailProvider.generic)
+                    Text(viewModel.localizedProviderTitle(.gmail)).tag(MailProvider.gmail)
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: accountProvider) { _, newProvider in
+                    accountProtocol = .imap
+                    testedAccountSignature = nil
+                    accountConnectionFeedback = nil
+                    if newProvider == .gmail {
+                        customIMAPHost = ""
+                        customSMTPHost = ""
+                        customPOP3Host = ""
+                    }
                 }
 
                 let preset = ProviderPreset.preset(for: accountProvider)
@@ -1062,6 +1072,31 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if accountProvider == .gmail {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(viewModel.localized(.gmailAppPasswordGuideTitle), systemImage: "exclamationmark.shield")
+                            .font(.caption.weight(.semibold))
+                        Text(viewModel.localized(.gmailAppPasswordGuideSteps))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            if let url = preset.appPasswordHelpURL {
+                                Link(destination: url) {
+                                    Label(viewModel.localized(.gmailAppPasswordOpenGoogle), systemImage: "safari")
+                                }
+                            }
+                            Link(destination: URL(string: "https://support.google.com/accounts/answer/185833")!) {
+                                Label(viewModel.localized(.documentation), systemImage: "questionmark.circle")
+                            }
+                        }
+                        Text(viewModel.localized(.gmailAppPasswordSecurityNote))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                }
 
                 Label(accountConnectionFeedbackText, systemImage: accountConnectionFeedbackIcon)
                     .font(.caption)
@@ -1070,7 +1105,7 @@ struct SettingsView: View {
 
                 HStack {
                     TextField(viewModel.localized(.emailAddress), text: $accountEmail)
-                    SecureField(viewModel.localized(.appPassword), text: $accountPassword)
+                    SecureField(accountProvider == .gmail ? viewModel.localized(.gmailAppPassword) : viewModel.localized(.appPassword), text: $accountPassword)
                 }
 
                 if preset.supportsOAuth2 {
