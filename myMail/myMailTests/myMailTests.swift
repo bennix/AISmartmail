@@ -2964,6 +2964,30 @@ struct myMailTests {
         #expect(aiService.lastModel == nil)
     }
 
+    @Test func ragAnswerReturnsNoRelevantMailForLowScoreMatches() async throws {
+        let account = MailAccount.demo()
+        let mailboxes = Mailbox.demoSet(accountId: account.id)
+        var messages = MailMessage.demoMessages(accountId: account.id, inboxId: mailboxes[0].id)
+        messages[0].subject = "食堂菜单"
+        messages[0].bodyPlain = "今天供应米饭和青菜。"
+        let embeddingService = StubEmbeddingService(result: .success([[0.7, 0.2, 0.1]]))
+        let vectorStore = RecordingVectorStore()
+        vectorStore.matches = [VectorMatch(messageId: messages[0].id, score: 0.05)]
+        let aiService = StubAIService(chunks: ["不应该被调用"])
+        let service = SearchService(embeddingService: embeddingService, vectorStore: vectorStore, aiService: aiService)
+
+        let answer = try await service.answer(
+            question: "期末论文在哪里？",
+            messages: [messages[0]],
+            chatModel: "openai/gpt-5.4"
+        )
+
+        #expect(answer.answer == SearchService.noRelevantMailMessage(language: .simplifiedChinese))
+        #expect(answer.citations.isEmpty)
+        #expect(aiService.lastMessages.isEmpty)
+        #expect(aiService.lastModel == nil)
+    }
+
     @Test func ragAnswerLocalizesMissingVectorIndexMessage() async throws {
         let account = MailAccount.demo()
         let mailboxes = Mailbox.demoSet(accountId: account.id)
@@ -3020,7 +3044,7 @@ struct myMailTests {
     }
 
     @MainActor
-    @Test func aiQuestionUsesOnlyCurrentMailboxVectorizedMessages() async throws {
+    @Test func aiQuestionUsesCurrentAccountVectorizedMessages() async throws {
         let account = MailAccount.demo()
         let inbox = Mailbox(id: UUID(), accountId: account.id, name: "INBOX", role: .inbox, uidValidity: 1, unreadCount: 0)
         let archive = Mailbox(id: UUID(), accountId: account.id, name: "Archive", role: .archive, uidValidity: 1, unreadCount: 0)
@@ -3041,7 +3065,7 @@ struct myMailTests {
             VectorMatch(messageId: messages[1].id, score: 0.95),
             VectorMatch(messageId: messages[0].id, score: 0.90)
         ]
-        let aiService = StubAIService(chunks: ["当前收件箱邮件提到期末论文提交截止日期是五月底 [1]。"])
+        let aiService = StubAIService(chunks: ["归档邮件提到期末论文提交截止日期是六月底 [1]。"])
         let viewModel = MailAppViewModel(
             secretStore: MemorySecretStore(),
             mailStore: MemoryMailStore(snapshot: MailStoreSnapshot(accounts: [account], mailboxes: [inbox, archive], messages: messages, attachments: [])),
@@ -3057,12 +3081,11 @@ struct myMailTests {
         await viewModel.runAIQuestion()
 
         #expect(viewModel.visibleMessages.map(\.id) == [messages[0].id])
-        #expect(vectorStore.lastAllowedMessageIDs == Set([messages[0].id]))
-        #expect(vectorStore.lastAllowedMessageIDs?.contains(messages[1].id) == false)
+        #expect(vectorStore.lastAllowedMessageIDs == Set([messages[0].id, messages[1].id]))
         #expect(vectorStore.lastAllowedMessageIDs?.contains(messages[2].id) == false)
-        #expect(viewModel.aiAnswer?.citations.map(\.id) == [messages[0].id])
+        #expect(viewModel.aiAnswer?.citations.map(\.id) == [messages[1].id, messages[0].id])
         #expect(aiService.lastMessages.last?.content.contains("当前收件箱期末论文邮件") == true)
-        #expect(aiService.lastMessages.last?.content.contains("归档里的期末论文邮件") == false)
+        #expect(aiService.lastMessages.last?.content.contains("归档里的期末论文邮件") == true)
     }
 
     @MainActor
@@ -3323,10 +3346,14 @@ struct myMailTests {
     }
 
     @MainActor
-    @Test func initializeVectorizationOnlyRebuildsCurrentMailbox() async throws {
+    @Test func initializeVectorizationOnlyRebuildsCurrentAccount() async throws {
         let account = MailAccount.demo()
+        var otherAccount = MailAccount.demo()
+        otherAccount.id = UUID()
+        otherAccount.emailAddress = "other@example.com"
         let inbox = Mailbox(id: UUID(), accountId: account.id, name: "INBOX", role: .inbox, uidValidity: 1, unreadCount: 0)
         let archive = Mailbox(id: UUID(), accountId: account.id, name: "Archive", role: .archive, uidValidity: 1, unreadCount: 0)
+        let otherInbox = Mailbox(id: UUID(), accountId: otherAccount.id, name: "INBOX", role: .inbox, uidValidity: 1, unreadCount: 0)
         var messages = MailMessage.demoMessages(accountId: account.id, inboxId: inbox.id)
         messages[0].mailboxId = inbox.id
         messages[0].embeddingState = .done
@@ -3334,8 +3361,17 @@ struct myMailTests {
         messages[1].embeddingState = .done
         messages[2].mailboxId = archive.id
         messages[2].embeddingState = .failed
-        let mailStore = MemoryMailStore(snapshot: MailStoreSnapshot(accounts: [account], mailboxes: [inbox, archive], messages: messages, attachments: []))
-        let embeddingService = StubEmbeddingService(result: .success([[0.9, 0.1]]))
+        var otherMessage = MailMessage.demoMessages(accountId: otherAccount.id, inboxId: otherInbox.id)[0]
+        otherMessage.id = UUID()
+        otherMessage.embeddingState = .failed
+        let allMessages = messages + [otherMessage]
+        let mailStore = MemoryMailStore(snapshot: MailStoreSnapshot(
+            accounts: [account, otherAccount],
+            mailboxes: [inbox, archive, otherInbox],
+            messages: allMessages,
+            attachments: []
+        ))
+        let embeddingService = StubEmbeddingService(result: .success([[0.9, 0.1], [0.8, 0.2], [0.7, 0.3]]))
         let vectorStore = RecordingVectorStore()
         var settings = AppSettings()
         settings.vectorizationEnabled = true
@@ -3355,14 +3391,16 @@ struct myMailTests {
 
         await viewModel.initializeVectorization(batchSize: 4)
 
-        #expect(embeddingService.requests.first?.count == 1)
+        #expect(embeddingService.requests.first?.count == 3)
         #expect(embeddingService.requests.first?.first?.contains(messages[0].subject) == true)
-        #expect(vectorStore.upserts.map(\.messageId) == [messages[0].id])
+        #expect(vectorStore.upserts.map(\.messageId) == messages.map(\.id))
         #expect(viewModel.messages.first { $0.id == messages[0].id }?.embeddingState == .done)
         #expect(viewModel.messages.first { $0.id == messages[1].id }?.embeddingState == .done)
-        #expect(viewModel.messages.first { $0.id == messages[2].id }?.embeddingState == .failed)
-        #expect(viewModel.vectorizationProgress?.total == 1)
-        #expect(mailStore.savedSnapshots.last?.messages.first { $0.id == messages[2].id }?.embeddingState == .failed)
+        #expect(viewModel.messages.first { $0.id == messages[2].id }?.embeddingState == .done)
+        #expect(viewModel.messages.first { $0.id == otherMessage.id }?.embeddingState == .failed)
+        #expect(viewModel.vectorizationProgress?.total == 3)
+        #expect(viewModel.statusMessage.contains("已索引 3 封邮件"))
+        #expect(mailStore.savedSnapshots.last?.messages.first { $0.id == otherMessage.id }?.embeddingState == .failed)
     }
 
     @MainActor

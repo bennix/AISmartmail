@@ -1164,6 +1164,7 @@ enum VectorMath {
 
 final class SearchService {
     static let missingVectorIndexMessage = "没有可用的向量索引。请先在设置中初始化/重建向量索引；AI 问答只会基于已向量化的邮件回答。"
+    private static let minimumContextScore = 0.2
 
     private let embeddingService: EmbeddingService
     private let vectorStore: VectorStore
@@ -1198,16 +1199,22 @@ final class SearchService {
         let allowed = Set(messages.map(\.id))
         let attachmentsByMessageID = Dictionary(grouping: attachments, by: \.messageId)
         let matches = try vectorStore.topK(query: queryEmbedding, k: topK, allowedMessageIDs: allowed)
-        let rankedMessages = Self.rankedContextMessages(
+        guard !matches.isEmpty else {
+            let missingIndexAnswer = SearchAnswer(question: question, answer: Self.missingVectorIndexMessage(language: responseLanguage), citations: [])
+            await onPartial?(missingIndexAnswer)
+            return missingIndexAnswer
+        }
+        let rankedResults = Self.rankedContextMessages(
             question: question,
             messages: messages,
             vectorMatches: matches,
             attachmentsByMessageID: attachmentsByMessageID,
             limit: topK
         )
+        let rankedMessages = rankedResults.map { $0.message }
 
         guard !rankedMessages.isEmpty else {
-            let emptyAnswer = SearchAnswer(question: question, answer: Self.missingVectorIndexMessage(language: responseLanguage), citations: [])
+            let emptyAnswer = SearchAnswer(question: question, answer: Self.noRelevantMailMessage(language: responseLanguage), citations: [])
             await onPartial?(emptyAnswer)
             return emptyAnswer
         }
@@ -1272,6 +1279,10 @@ final class SearchService {
         AppLocalizer.text(.emptyAIAnswer, language: language)
     }
 
+    static func noRelevantMailMessage(language: AppLanguage) -> String {
+        AppLocalizer.text(.noRelevantVectorizedMail, language: language)
+    }
+
     static func indexText(for message: MailMessage, attachments: [MailAttachment] = []) -> String {
         [
             "Subject: \(message.subject)",
@@ -1295,7 +1306,7 @@ final class SearchService {
         vectorMatches: [VectorMatch],
         attachmentsByMessageID: [UUID: [MailAttachment]],
         limit: Int
-    ) -> [MailMessage] {
+    ) -> [(message: MailMessage, score: Double)] {
         let messagesByID = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
         let vectorScores = Dictionary(uniqueKeysWithValues: vectorMatches.map { ($0.messageId, $0.score) })
         var candidateIDs = Set(vectorMatches.map(\.messageId))
@@ -1312,9 +1323,10 @@ final class SearchService {
             candidateIDs.insert(message.id)
         }
 
-        return candidateIDs.compactMap { id -> (message: MailMessage, score: Double)? in
+        let ranked = candidateIDs.compactMap { id -> (message: MailMessage, score: Double)? in
             guard let message = messagesByID[id] else { return nil }
             let score = (vectorScores[id] ?? 0) + (lexicalScores[id] ?? 0)
+            guard score >= minimumContextScore else { return nil }
             return (message, score)
         }
         .sorted {
@@ -1323,8 +1335,7 @@ final class SearchService {
             }
             return $0.score > $1.score
         }
-        .prefix(max(limit, 1))
-        .map(\.message)
+        return Array(ranked.prefix(max(limit, 1)))
     }
 
     private static func lexicalScore(question: String, message: MailMessage, attachments: [MailAttachment]) -> Double {

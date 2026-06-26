@@ -1830,7 +1830,7 @@ final class MailAppViewModel: ObservableObject {
             aiAnswer = SearchAnswer(question: question, answer: configurationMessage, citations: [])
             return
         }
-        let vectorizedMessages = currentMailboxScopeMessages().filter { $0.embeddingState == .done }
+        let vectorizedMessages = currentAccountScopeMessages().filter { $0.embeddingState == .done }
         guard !vectorizedMessages.isEmpty else {
             let message = SearchService.missingVectorIndexMessage(language: settings.interfaceLanguage)
             statusMessage = message
@@ -1862,12 +1862,9 @@ final class MailAppViewModel: ObservableObject {
         SearchService(embeddingService: resolvedEmbeddingService(), vectorStore: vectorStore, aiService: aiService)
     }
 
-    private func currentMailboxScopeMessages() -> [MailMessage] {
-        if selectedSmartMailbox == .starred {
-            return messages.filter { $0.flags.contains(.flagged) }
-        }
-        guard let selectedAccountID, let selectedMailboxID else { return [] }
-        return messages.filter { $0.accountId == selectedAccountID && $0.mailboxId == selectedMailboxID }
+    private func currentAccountScopeMessages() -> [MailMessage] {
+        guard let selectedAccountID else { return [] }
+        return messages.filter { $0.accountId == selectedAccountID }
     }
 
     private func resolvedEmbeddingService() -> EmbeddingService {
@@ -2687,7 +2684,7 @@ final class MailAppViewModel: ObservableObject {
         settings.vectorizationConsentAccepted = true
         showsVectorizationPrivacyPrompt = false
 
-        let scopedMessageIDs = Set(currentMailboxScopeMessages().map(\.id))
+        let scopedMessageIDs = Set(currentAccountScopeMessages().map(\.id))
         guard !scopedMessageIDs.isEmpty else {
             statusMessage = localized(.vectorizationNoMessages)
             vectorizationProgress = nil
@@ -2709,7 +2706,7 @@ final class MailAppViewModel: ObservableObject {
         let failedCount = messages.filter { scopedMessageIDs.contains($0.id) && $0.embeddingState == .failed }.count
         vectorizationProgress = VectorizationProgress(total: total, completed: total - failedCount, failed: failedCount, isActive: false)
         if failedCount > 0 {
-            statusMessage = localized(.vectorizationCompletedWithFailures, failedCount)
+            statusMessage = localized(.vectorizationCompletedWithFailures, total - failedCount, failedCount)
         } else {
             statusMessage = localized(.vectorizationCompleted, total)
         }
@@ -2962,6 +2959,7 @@ enum AppText: String, CaseIterable {
     case cancel
     case vectorizationPrivacyMessage
     case missingVectorIndex
+    case noRelevantVectorizedMail
     case emptyAIAnswer
     case attachmentNotSaved
     case openAttachment
@@ -3128,6 +3126,7 @@ struct AppLocalizer {
             .cancel: "取消",
             .vectorizationPrivacyMessage: "向量化仅在本机使用 NLEmbedding 生成，用于 AI 检索和问答；邮件正文与附件文本不会因为向量化上传。",
             .missingVectorIndex: "没有可用的向量索引。请先在设置中初始化/重建向量索引；AI 问答只会基于已向量化的邮件回答。",
+            .noRelevantVectorizedMail: "当前账号已向量化的邮件中没有找到相关内容。",
             .emptyAIAnswer: "模型没有返回可用回答。"
         ],
         .traditionalChinese: [
@@ -3171,6 +3170,7 @@ struct AppLocalizer {
             .cancel: "取消",
             .vectorizationPrivacyMessage: "向量化只會在本機使用 NLEmbedding 產生，用於 AI 檢索和問答；郵件正文與附件文字不會因向量化上傳。",
             .missingVectorIndex: "沒有可用的向量索引。請先在設定中初始化/重建向量索引；AI 問答只會根據已向量化的郵件回答。",
+            .noRelevantVectorizedMail: "目前帳號已向量化的郵件中沒有找到相關內容。",
             .emptyAIAnswer: "模型沒有返回可用回答。"
         ],
         .japanese: [
@@ -3214,6 +3214,7 @@ struct AppLocalizer {
             .cancel: "キャンセル",
             .vectorizationPrivacyMessage: "ベクトル化はローカルの NLEmbedding のみを使用し、AI 検索と質問応答に使われます。メール本文や添付テキストはベクトル化のためにアップロードされません。",
             .missingVectorIndex: "利用できるベクトル索引がありません。設定で索引を初期化/再構築してください。AI 質問応答はベクトル化済みメールだけに基づきます。",
+            .noRelevantVectorizedMail: "現在のアカウントのベクトル化済みメールに関連する内容は見つかりませんでした。",
             .emptyAIAnswer: "モデルから有効な回答が返りませんでした。"
         ],
         .korean: [
@@ -3257,6 +3258,7 @@ struct AppLocalizer {
             .cancel: "취소",
             .vectorizationPrivacyMessage: "벡터화는 로컬 NLEmbedding만 사용하며 AI 검색과 질의응답에 쓰입니다. 메일 본문과 첨부 텍스트는 벡터화를 위해 업로드되지 않습니다.",
             .missingVectorIndex: "사용 가능한 벡터 인덱스가 없습니다. 설정에서 벡터 인덱스를 초기화/재구성하세요. AI 질의응답은 벡터화된 메일만 기반으로 합니다.",
+            .noRelevantVectorizedMail: "현재 계정의 벡터화된 메일에서 관련 내용을 찾지 못했습니다.",
             .emptyAIAnswer: "모델이 유효한 답변을 반환하지 않았습니다."
         ],
         .english: [
@@ -3300,6 +3302,7 @@ struct AppLocalizer {
             .cancel: "Cancel",
             .vectorizationPrivacyMessage: "Vectorization uses only local NLEmbedding for AI search and Q&A. Mail body text and readable attachment text are not uploaded for vectorization.",
             .missingVectorIndex: "No vector index is available. Initialize or rebuild the vector index in Settings first; AI Q&A only answers from vectorized mail.",
+            .noRelevantVectorizedMail: "No relevant content was found in the current account's vectorized mail.",
             .emptyAIAnswer: "The model did not return a usable answer."
         ],
         .french: [
@@ -3343,6 +3346,7 @@ struct AppLocalizer {
             .cancel: "Annuler",
             .vectorizationPrivacyMessage: "La vectorisation utilise uniquement NLEmbedding local pour la recherche IA et les questions-réponses. Le corps des mails et le texte lisible des pièces jointes ne sont pas envoyés pour la vectorisation.",
             .missingVectorIndex: "Aucun index vectoriel disponible. Initialisez ou reconstruisez l'index dans Réglages ; les questions IA répondent uniquement à partir des mails vectorisés.",
+            .noRelevantVectorizedMail: "Aucun contenu pertinent n'a été trouvé dans les mails vectorisés du compte actuel.",
             .emptyAIAnswer: "Le modèle n'a pas renvoyé de réponse exploitable."
         ],
         .russian: [
@@ -3386,6 +3390,7 @@ struct AppLocalizer {
             .cancel: "Отмена",
             .vectorizationPrivacyMessage: "Векторизация использует только локальный NLEmbedding для поиска ИИ и вопросов-ответов. Текст писем и читаемый текст вложений не загружаются для векторизации.",
             .missingVectorIndex: "Нет доступного векторного индекса. Сначала инициализируйте или перестройте индекс в настройках; ИИ отвечает только по векторизованным письмам.",
+            .noRelevantVectorizedMail: "В векторизованных письмах текущей учетной записи не найдено релевантного содержания.",
             .emptyAIAnswer: "Модель не вернула пригодный ответ."
         ],
         .swedish: [
@@ -3429,6 +3434,7 @@ struct AppLocalizer {
             .cancel: "Avbryt",
             .vectorizationPrivacyMessage: "Vektorisering använder endast lokal NLEmbedding för AI-sökning och frågor och svar. Meddelandetext och läsbar bilagetext laddas inte upp för vektorisering.",
             .missingVectorIndex: "Inget vektorindex är tillgängligt. Initiera eller bygg om indexet i Inställningar först; AI-frågor besvaras bara från vektoriserad e-post.",
+            .noRelevantVectorizedMail: "Inget relevant innehåll hittades i det aktuella kontots vektoriserade e-post.",
             .emptyAIAnswer: "Modellen returnerade inget användbart svar."
         ],
         .ukrainian: [
@@ -3472,6 +3478,7 @@ struct AppLocalizer {
             .cancel: "Скасувати",
             .vectorizationPrivacyMessage: "Векторизація використовує лише локальний NLEmbedding для пошуку ШІ та запитань-відповідей. Текст листів і читабельний текст вкладень не завантажуються для векторизації.",
             .missingVectorIndex: "Немає доступного векторного індексу. Спочатку ініціалізуйте або перебудуйте індекс у Налаштуваннях; ШІ відповідає лише за векторизованими листами.",
+            .noRelevantVectorizedMail: "У векторизованих листах поточного облікового запису не знайдено релевантного вмісту.",
             .emptyAIAnswer: "Модель не повернула придатну відповідь."
         ],
         .finnish: [
@@ -3515,6 +3522,7 @@ struct AppLocalizer {
             .cancel: "Peruuta",
             .vectorizationPrivacyMessage: "Vektorointi käyttää vain paikallista NLEmbeddingia tekoälyhakuun ja kysymyksiin vastaamiseen. Viestien sisältöä ja luettavaa liitetekstiä ei lähetetä vektorointia varten.",
             .missingVectorIndex: "Vektori-indeksiä ei ole saatavilla. Alusta tai rakenna indeksi ensin Asetuksissa; AI-kysymykset vastaavat vain vektoroiduista viesteistä.",
+            .noRelevantVectorizedMail: "Nykyisen tilin vektoroiduista viesteistä ei löytynyt olennaista sisältöä.",
             .emptyAIAnswer: "Malli ei palauttanut käyttökelpoista vastausta."
         ]
     ]
@@ -3611,7 +3619,7 @@ struct AppLocalizer {
             .vectorizationMustEnable: "请先开启向量化。",
             .vectorizationNoMessages: "没有可初始化向量化的邮件。",
             .vectorizationQueueInitialized: "已初始化 %d 封邮件的向量化队列，正在处理正文和可读附件。",
-            .vectorizationCompletedWithFailures: "向量化初始化完成，%d 封邮件处理失败。",
+            .vectorizationCompletedWithFailures: "向量化初始化完成，已索引 %d 封邮件，%d 封邮件处理失败。",
             .vectorizationCompleted: "向量化初始化完成，已索引 %d 封邮件。",
             .vectorizationRemoteFallback: "ZenMux 向量化失败，已降级为本地 NLEmbedding。",
             .vectorizationFailedStatus: "向量化失败：%@",
@@ -3713,7 +3721,7 @@ struct AppLocalizer {
             .vectorizationMustEnable: "請先啟用向量化。",
             .vectorizationNoMessages: "沒有可初始化向量化的郵件。",
             .vectorizationQueueInitialized: "已初始化 %d 封郵件的向量化佇列，正在處理正文和可讀附件。",
-            .vectorizationCompletedWithFailures: "向量化初始化完成，%d 封郵件處理失敗。",
+            .vectorizationCompletedWithFailures: "向量化初始化完成，已索引 %d 封郵件，%d 封郵件處理失敗。",
             .vectorizationCompleted: "向量化初始化完成，已索引 %d 封郵件。",
             .vectorizationRemoteFallback: "ZenMux 向量化失敗，已降級為本機 NLEmbedding。",
             .vectorizationFailedStatus: "向量化失敗：%@",
@@ -3826,7 +3834,7 @@ struct AppLocalizer {
             .vectorizationMustEnable: "Enable vectorization first.",
             .vectorizationNoMessages: "There are no messages to vectorize.",
             .vectorizationQueueInitialized: "Initialized the vectorization queue for %d messages. Processing bodies and readable attachments.",
-            .vectorizationCompletedWithFailures: "Vectorization finished; %d messages failed.",
+            .vectorizationCompletedWithFailures: "Vectorization finished; indexed %d messages and failed %d messages.",
             .vectorizationCompleted: "Vectorization finished; indexed %d messages.",
             .vectorizationRemoteFallback: "ZenMux vectorization failed; falling back to local NLEmbedding.",
             .vectorizationFailedStatus: "Vectorization failed: %@",
@@ -3928,7 +3936,7 @@ struct AppLocalizer {
             .vectorizationMustEnable: "先にベクトル化を有効にしてください。",
             .vectorizationNoMessages: "ベクトル化できるメールがありません。",
             .vectorizationQueueInitialized: "%d 件のメールのベクトル化キューを初期化しました。本文と読み取り可能な添付を処理しています。",
-            .vectorizationCompletedWithFailures: "ベクトル化が完了しました。%d 件のメールで失敗しました。",
+            .vectorizationCompletedWithFailures: "ベクトル化が完了しました。%d 件を索引化し、%d 件で失敗しました。",
             .vectorizationCompleted: "ベクトル化が完了しました。%d 件のメールを索引化しました。",
             .vectorizationRemoteFallback: "ZenMux ベクトル化に失敗したため、ローカル NLEmbedding に切り替えました。",
             .vectorizationFailedStatus: "ベクトル化に失敗しました：%@",
@@ -4030,7 +4038,7 @@ struct AppLocalizer {
             .vectorizationMustEnable: "먼저 벡터화를 켜세요.",
             .vectorizationNoMessages: "벡터화할 메일이 없습니다.",
             .vectorizationQueueInitialized: "%d개 메일의 벡터화 대기열을 초기화했습니다. 본문과 읽을 수 있는 첨부를 처리 중입니다.",
-            .vectorizationCompletedWithFailures: "벡터화가 완료되었지만 %d개 메일 처리에 실패했습니다.",
+            .vectorizationCompletedWithFailures: "벡터화가 완료되어 %d개 메일을 인덱싱했고 %d개 메일은 실패했습니다.",
             .vectorizationCompleted: "벡터화가 완료되어 %d개 메일을 인덱싱했습니다.",
             .vectorizationRemoteFallback: "ZenMux 벡터화에 실패하여 로컬 NLEmbedding으로 전환했습니다.",
             .vectorizationFailedStatus: "벡터화 실패: %@",
@@ -4132,7 +4140,7 @@ struct AppLocalizer {
             .vectorizationMustEnable: "Activez d'abord la vectorisation.",
             .vectorizationNoMessages: "Aucun message à vectoriser.",
             .vectorizationQueueInitialized: "File de vectorisation initialisée pour %d messages. Traitement des corps et pièces jointes lisibles.",
-            .vectorizationCompletedWithFailures: "Vectorisation terminée ; %d messages ont échoué.",
+            .vectorizationCompletedWithFailures: "Vectorisation terminée ; %d messages indexés et %d messages en échec.",
             .vectorizationCompleted: "Vectorisation terminée ; %d messages indexés.",
             .vectorizationRemoteFallback: "La vectorisation ZenMux a échoué ; bascule vers NLEmbedding local.",
             .vectorizationFailedStatus: "Échec de la vectorisation : %@",
@@ -4234,7 +4242,7 @@ struct AppLocalizer {
             .vectorizationMustEnable: "Сначала включите векторизацию.",
             .vectorizationNoMessages: "Нет писем для векторизации.",
             .vectorizationQueueInitialized: "Очередь векторизации создана для %d писем. Обрабатываются тексты и читаемые вложения.",
-            .vectorizationCompletedWithFailures: "Векторизация завершена; не удалось обработать %d писем.",
+            .vectorizationCompletedWithFailures: "Векторизация завершена; проиндексировано %d писем, не удалось обработать %d.",
             .vectorizationCompleted: "Векторизация завершена; проиндексировано %d писем.",
             .vectorizationRemoteFallback: "Векторизация ZenMux не удалась; выполнен переход на локальный NLEmbedding.",
             .vectorizationFailedStatus: "Ошибка векторизации: %@",
