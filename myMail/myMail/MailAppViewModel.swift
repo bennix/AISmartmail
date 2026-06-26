@@ -66,6 +66,8 @@ final class MailAppViewModel: ObservableObject {
     private let mailServiceFactory: () -> MailService
     private let aiService: AIService
     private let vectorStore: VectorStore
+    private let usesAccountScopedVectorStores: Bool
+    private var accountVectorStores: [UUID: VectorStore] = [:]
     private let injectedEmbeddingService: EmbeddingService?
     private let localEmbeddingService = LocalNLEmbeddingService()
     private let oauth2Service: OAuth2Service
@@ -141,7 +143,13 @@ final class MailAppViewModel: ObservableObject {
             }
         }
         self.aiService = resolvedAIService
-        self.vectorStore = vectorStore ?? Self.defaultVectorStore()
+        if let vectorStore {
+            self.vectorStore = vectorStore
+            self.usesAccountScopedVectorStores = false
+        } else {
+            self.vectorStore = Self.defaultVectorStore()
+            self.usesAccountScopedVectorStores = true
+        }
         self.injectedEmbeddingService = embeddingService
         self.oauth2Service = resolvedOAuth2Service
         self.attachmentCacheRoot = attachmentCacheRoot ?? Self.defaultAttachmentCacheRoot()
@@ -780,6 +788,19 @@ final class MailAppViewModel: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             return try SQLiteVectorStore(url: directory.appendingPathComponent("Vectors.sqlite", isDirectory: false))
+        } catch {
+            return InMemoryVectorStore()
+        }
+    }
+
+    private static func defaultVectorStore(accountID: UUID) -> VectorStore {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+        let directory = base
+            .appendingPathComponent("myMail", isDirectory: true)
+            .appendingPathComponent("VectorStores", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            return try SQLiteVectorStore(url: directory.appendingPathComponent("\(accountID.uuidString).sqlite", isDirectory: false))
         } catch {
             return InMemoryVectorStore()
         }
@@ -1859,12 +1880,22 @@ final class MailAppViewModel: ObservableObject {
     }
 
     private func makeSearchService() -> SearchService {
-        SearchService(embeddingService: resolvedEmbeddingService(), vectorStore: vectorStore, aiService: aiService)
+        SearchService(embeddingService: resolvedEmbeddingService(), vectorStore: vectorStore(forAccountID: selectedAccountID), aiService: aiService)
     }
 
     private func currentAccountScopeMessages() -> [MailMessage] {
         guard let selectedAccountID else { return [] }
         return messages.filter { $0.accountId == selectedAccountID }
+    }
+
+    private func vectorStore(forAccountID accountID: UUID?) -> VectorStore {
+        guard usesAccountScopedVectorStores, let accountID else { return vectorStore }
+        if let store = accountVectorStores[accountID] {
+            return store
+        }
+        let store = Self.defaultVectorStore(accountID: accountID)
+        accountVectorStores[accountID] = store
+        return store
     }
 
     private func resolvedEmbeddingService() -> EmbeddingService {
@@ -2757,7 +2788,7 @@ final class MailAppViewModel: ObservableObject {
         do {
             let vectors = try await resolvedEmbeddingService().embed(texts: texts)
             for (message, vector) in zip(pendingMessages, vectors) {
-                try vectorStore.upsert(messageId: message.id, embedding: vector)
+                try vectorStore(forAccountID: message.accountId).upsert(messageId: message.id, embedding: vector)
                 if let index = messages.firstIndex(where: { $0.id == message.id }) {
                     messages[index].embeddingState = .done
                 }
