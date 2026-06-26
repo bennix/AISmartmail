@@ -1,0 +1,12 @@
+.DS_Store
+.serena/
+.memsearch/
+DerivedData/
+build/
+dist/
+*.dmg
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.xcscmblueprint
+

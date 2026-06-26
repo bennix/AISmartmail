@@ -10,12 +10,12 @@
 | 维度 | 决策 |
 |---|---|
 | 技术栈 | 原生 Swift 6 + SwiftUI,延续现有 Xcode 工程,macOS 14+ |
-| 协议层 | MailCore2(C/ObjC,经 bridging header)处理 IMAP/SMTP/POP3 + MIME |
+| 协议层 | 原生 Swift 协议层处理 IMAP/SMTP/POP3 + MIME,不依赖旧 C/ObjC 邮件库 |
 | 认证 | 应用专用密码为主;Gmail/Outlook 可选 OAuth2 |
 | 本地存储 | Core Data / SQLite 本地缓存,支持离线读、增量同步 |
 | AI 平台 | ZenMux(OpenAI 兼容),`base_url=https://zenmux.ai/api/v1` |
-| AI 检索 | 本地 RAG:邮件向量化 → 余弦 Top-K → 带引用的自然语言问答 |
-| 向量库 | SQLite + sqlite-vec;embedding 走 ZenMux,可降级 Apple NLEmbedding |
+| AI 检索 | 本地 RAG:邮件本地向量化 → 余弦 Top-K → 带引用的自然语言问答 |
+| 向量库 | SQLite + sqlite-vec;embedding 只使用 Apple NLEmbedding 本地生成 |
 | AI 回复 | 生成回复草稿填入编辑器,用户改后手动发送(不自动发送) |
 
 ---
@@ -31,11 +31,11 @@
 │  ViewModels (ObservableObject, @MainActor)            │
 ├─────────────────────────────────────────────────────┤
 │  Services 层                                          │
-│  • MailService    (MailCore2 封装:IMAP/SMTP/POP3)     │
+│  • MailService    (原生 Swift IMAP/SMTP/POP3/MIME)    │
 │  • SyncEngine     (增量同步 → Core Data)               │
 │  • AIService      (ZenMux OpenAI 兼容 API)             │
 │  • SearchService  (本地过滤 + AI 自然语言 RAG 问答)      │
-│  • EmbeddingService / VectorStore (向量化 + 检索)       │
+│  • EmbeddingService / VectorStore (本地向量化 + 检索)    │
 │  • KeychainStore  (密码 / API-Key 加密存储)            │
 ├─────────────────────────────────────────────────────┤
 │  Core Data (本地缓存:Account/Mailbox/Message/Attachment)│
@@ -43,7 +43,7 @@
 └─────────────────────────────────────────────────────┘
 ```
 
-**第三方依赖**:仅 MailCore2(SPM 或手动 framework + ObjC bridging header)。其余全部系统框架:Foundation / SwiftUI / CoreData / Security(Keychain)/ NaturalLanguage / WebKit / URLSession。
+**第三方依赖**:不引入旧 C/ObjC 邮件库或其他邮件协议三方库,避免 Intel-only framework 在 Apple Silicon 上产生架构警告。邮件收发、MIME 与认证协议由项目内 Swift 实现;其余全部系统框架:Foundation / SwiftUI / CoreData / Security(Keychain)/ NaturalLanguage / WebKit / URLSession。
 
 **关键原则**:
 - 所有网络/磁盘操作走 async/await,UI 永不阻塞。
@@ -118,9 +118,9 @@ CREATE VIRTUAL TABLE message_vectors USING vec0(
 
 ## §3 同步引擎与协议层
 
-### MailService(MailCore2 封装)
+### MailService(原生 Swift 协议层)
 
-把 MailCore2 回调式 API 包成 `withCheckedThrowingContinuation`,暴露 async/await:
+用项目内 Swift 传输层实现 IMAP/SMTP/POP3、TLS/STARTTLS、MIME 与认证流程,暴露 async/await:
 
 ```swift
 protocol MailService {
@@ -143,11 +143,11 @@ protocol MailService {
 4. **POP3 账户**:无 IDLE/文件夹概念,定时(默认 5 分钟)`UIDL` 拉新邮件到本地 INBOX;`LIST`/`UIDL` 比对已下载列表去重。
 5. **正文懒加载**:点开邮件时 `fetchBody`,落 Core Data 并标 `isBodyDownloaded=true`;同时该邮件 embedding 任务入队。
 
-**发送流**:`OutgoingMessage`(收件人/主题/正文/附件)→ MailCore2 SMTP → 成功后 `APPEND` 到 Sent 文件夹 → 写 Core Data。
+**发送流**:`OutgoingMessage`(收件人/主题/正文/附件)→ 原生 Swift SMTP → 成功后 `APPEND` 到 Sent 文件夹 → 写 Core Data。
 
 **错误处理**:网络错误指数退避重试(≤3 次);认证失败 → 账户标 `needsReauth`,UI 提示重输密码;TLS 失败明确报错,不静默降级到明文。
 
-**并发**:每账户一个 actor 串行化该账户的 IMAP 连接(MailCore2 session 非线程安全);账户之间并行。
+**并发**:每账户一个 actor 串行化该账户的 IMAP/POP3/SMTP 操作;账户之间并行。
 
 ---
 
@@ -155,12 +155,11 @@ protocol MailService {
 
 ### AIService(ZenMux,OpenAI 兼容)
 
-`base_url=https://zenmux.ai/api/v1`,`Authorization: Bearer <API-Key>`。统一 `/chat/completions`(SSE 流式)与 `/embeddings`。
+`base_url=https://zenmux.ai/api/v1`,`Authorization: Bearer <API-Key>`。用于 `/chat/completions`(SSE 流式)等聊天能力;邮件向量化不调用远端 embedding 接口。
 
 ```swift
 protocol AIService {
   func chat(model: String, messages: [ChatMessage], stream: Bool) -> AsyncThrowingStream<String, Error>
-  func embed(model: String, texts: [String]) async throws -> [[Float]]
 }
 ```
 
@@ -175,7 +174,7 @@ protocol AIService {
 ```
 用户提问 "上周 Alice 关于发票的邮件"
   │
-  1. EmbeddingService.embed(问题) → 查询向量
+  1. LocalNLEmbeddingService.embed(问题) → 查询向量
   2. VectorStore 余弦 Top-K(默认 K=8,可加 date/account 预过滤)
   3. 取回 Top-K 邮件正文,组装带编号 context
   4. ZenMux 对话模型 + system prompt(「仅根据以下邮件回答,标注引用编号」)
@@ -186,17 +185,17 @@ protocol AIService {
 
 - 监听 `Message.embeddingState == pending` 队列。
 - 文本 = `主题 + 发件人 + 正文`,超长截断到 embedding 模型上限(取首块,邮件场景够用)。
-- 批量(每批 ~16 封)调 `embed` → 写 sqlite-vec → 标 `done`;失败标 `failed` 退避重试。
-- **降级**:若设置中 embedding 模型为空 / 接口报不支持 → 自动切 Apple `NLEmbedding`(句向量),向量表维度相应调整。
+- 批量(每批 ~16 封)使用 Apple `NLEmbedding` 生成本地向量 → 写 sqlite-vec/SQLite fallback → 标 `done`;失败标 `failed` 退避重试。
+- **本地-only**:不使用 `openai/text-embedding-3-small`,也不会把邮件正文或附件文本上传到远端生成 embedding。
 
 ### 模型配置
 
 - **对话模型**:下拉,预置 `anthropic/claude-sonnet-4.6` / `z-ai/glm-5v-turbo` / `openai/gpt-5.4`,可增删,单选默认。
-- **Embedding 模型**:文本框,默认 `openai/text-embedding-3-small`;可改用本地 NLEmbedding。
+- **Embedding 模型**:固定使用本地 NLEmbedding,不提供远端 embedding 模型选择。
 
-> 注:用户给定的 3 个对话模型均无 embedding 能力,故 embedding 模型独立可配并保留 NLEmbedding 降级路径,使规格自洽。
+> 注:对话模型只用于 AI 回答和草稿生成;向量化独立于对话模型,始终在本机完成。
 
-**隐私提示**:首次开启向量化弹窗告知「邮件文本将发送至 ZenMux 生成向量」,可选纯本地 NLEmbedding。
+**隐私提示**:向量化只在本机生成,用于 AI 检索和问答;邮件正文和可读取附件文本不会因为向量化上传。
 
 ---
 
@@ -224,7 +223,7 @@ protocol AIService {
   - 已保存时显示掩码 `sk-••••1234`(仅露后 4 位)+「显示/隐藏」眼睛按钮 +「更新」。
   - 未保存时:下方提示「还没有 API-Key?」+ **邀请链接按钮**打开 `https://zenmux.ai/invite/GBQMC5`。
 - **对话模型**:可增删列表(预置 3 个),「+ 添加模型名」自由输入;单选默认。
-- **Embedding 模型**:文本框默认 `openai/text-embedding-3-small`;开关「改用本地 NLEmbedding(纯离线)」。
+- **向量化说明**:固定本地 NLEmbedding,显示「本地向量化」说明与初始化/重建索引按钮;不提供远端 embedding 模型输入。
 - 「测试 API-Key」:发最小 chat 请求验证。
 
 **③ 通用标签**
@@ -258,7 +257,7 @@ protocol AIService {
 ### 测试方案
 
 - **单元测试**:MIME 解析、UID 增量 diff、余弦 Top-K 排序、Keychain 读写、服务商预设映射、API-Key 掩码格式化。
-- **集成测试**:MailCore2 连测试 IMAP(GreenMail / 本地 dovecot 容器)跑收发;ZenMux 用 mock URLProtocol 拦截。
+- **集成测试**:原生 Swift 协议层连测试 IMAP(GreenMail / 本地 dovecot 容器)跑收发;ZenMux 用 mock URLProtocol 拦截。
 - **手动验收清单**:三服务商各加账户能收发;AI 回复草稿生成;RAG 问答带正确引用;重启后凭据从 Keychain 恢复、UI 不泄明文。
 - **TDD 流程**:每个 Service 先写协议 + 测试桩,再实现。
 
@@ -266,7 +265,7 @@ protocol AIService {
 
 ## 实现里程碑建议(交付顺序)
 
-1. **M1 工程骨架**:MailCore2 集成 + bridging header + Core Data 模型 + KeychainStore。
+1. **M1 工程骨架**:原生 Swift 邮件协议层 + Core Data/SQLite 模型 + KeychainStore。
 2. **M2 账户与同步**:添加账户/服务商预设/测试连接 → IMAP 首次同步 + 增量 + IDLE → 三栏列表读邮件。
 3. **M3 收发**:正文懒加载 + 撰写/发送/回复/转发 + POP3 轮询。
 4. **M4 AI**:AIService(ZenMux)+ AI 回复草稿(流式)。

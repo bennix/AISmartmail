@@ -1,0 +1,19 @@
+{
+  "appName": "myMail",
+  "localizations": {
+    "zh-Hans": {
+      "subtitle": "原生邮件与本地 AI 检索",
+      "promotionalText": "myMail 是一款原生 macOS 邮件客户端，支持 IMAP/SMTP/POP3、附件、星标、已读同步和可选 AI 邮件问答。AI 功能可选择本地向量索引或经用户同意后使用远程模型。",
+      "description": "myMail 是为 macOS 打造的原生邮件客户端，适合需要管理学校、企业或个人邮箱的用户。\n\n它支持通用 IMAP/SMTP/POP3 服务器配置，能够接收、阅读、搜索和发送邮件，并处理附件、星标、已读状态和垃圾邮件文件夹。邮件列表按服务器收件时间排序，帮助你更准确地查看最新邮件。\n\nmyMail 还提供可选 AI 增强功能。你可以初始化本地向量索引，让 AI 基于已索引的邮件内容回答问题并返回可点击的相关邮件引用。AI 功能不是基本收发邮件的必要条件；不配置 AI 模型也可以正常使用邮件功能。若选择远程向量化或远程问答，应用会在启用前提示邮件内容可能被发送到所配置的服务商；你也可以选择本地 NLEmbedding 方案。\n\n主要功能：\n- 通用 IMAP/SMTP/POP3 邮箱配置\n- Gmail OAuth 登录支持\n- 附件打开与保存\n- 星标邮件与星标专栏\n- 已读状态同步\n- 垃圾邮件、收件箱、发件箱等文件夹识别\n- 按收件时间、发件人排序\n- 邮件正文和附件文本的可选向量化索引\n- 基于邮件索引的 AI 问答和引用跳转\n- Keychain 凭据保存\n\nmyMail 不包含广告，不进行跨 App 或跨网站追踪。",
+      "keywords": "邮件,邮箱,IMAP,SMTP,POP3,AI,附件,星标,Gmail,OAuth,本地索引,邮件搜索,客户端",
+      "whatsNew": "改进 IMAP 同步、垃圾邮件文件夹识别、附件处理、收件时间排序和 AI 邮件问答体验。"
+    },
+    "en-US": {
+      "subtitle": "Native mail with AI search",
+      "promotionalText": "myMail is a native macOS mail client with IMAP/SMTP/POP3, attachments, stars, read-state sync, and optional AI question answering over your indexed mail.",
+      "description": "myMail is a native macOS mail client for school, work, and personal mail accounts.\n\nIt supports generic IMAP/SMTP/POP3 configuration, mail reading, search, sending, attachments, starred messages, read-state sync, and junk mail folders. Message lists are sorted by server received date so the newest mail appears in the right order even when sender date headers are unusual.\n\nmyMail also includes optional AI enhancements. You can initialize a local vector index and ask questions over indexed mail, with clickable references back to the original messages. AI is not required for normal mail. If you choose remote vectorization or remote question answering, myMail explains that mail content may be sent to the configured provider before you enable it. You can also choose local NLEmbedding for offline indexing.\n\nFeatures:\n- Generic IMAP/SMTP/POP3 account setup\n- Gmail OAuth support\n- Attachment open and save\n- Starred mail list\n- Read-state sync\n- Inbox, sent, junk, archive, drafts, and custom folders\n- Sort by received date or sender\n- Optional vector indexing for mail and readable attachment text\n- AI answers with source message references\n- Keychain credential storage\n\nmyMail has no ads and does not track you across apps or websites.",
+      "keywords": "email,mail,imap,smtp,pop3,ai,assistant,search,attachments,gmail,oauth,vector,inbox,productivity",
+      "whatsNew": "Improved IMAP sync, junk folder recognition, attachment handling, received-date sorting, and AI mail Q&A."
+    }
+  }
+}
