@@ -816,6 +816,36 @@ struct myMailTests {
 
 
     @MainActor
+    @Test func gmailConnectionTestAllowsSavingWhenOnlySMTPFails() async throws {
+        let mailService = StubMailService(body: MessageBody(plain: "", html: nil, attachments: []))
+        mailService.outgoingTestFailureMessage = "smtp TLS failure"
+        let viewModel = MailAppViewModel(
+            secretStore: MemorySecretStore(),
+            mailStore: MemoryMailStore(snapshot: MailStoreSnapshot(accounts: [], mailboxes: [], messages: [], attachments: [])),
+            settingsStore: MemorySettingsStore(),
+            mailService: mailService,
+            aiService: StubAIService(chunks: []),
+            vectorStore: InMemoryVectorStore(),
+            embeddingService: LocalNLEmbeddingService(),
+            autoBootstrapEmbeddings: false
+        )
+
+        let didPassConnectionTest = await viewModel.testAccountConnection(
+            provider: .gmail,
+            email: "dr.bennix@gmail.com",
+            password: "abcd efgh ijkl mnop",
+            useProtocol: .imap
+        )
+
+        #expect(didPassConnectionTest)
+        #expect(mailService.testedAccount?.provider == .gmail)
+        #expect(mailService.testedAccount?.useProtocol == .imap)
+        #expect(mailService.testedPassword == "abcdefghijklmnop")
+        #expect(viewModel.statusMessage.contains("收信测试通过"))
+        #expect(viewModel.statusMessage.contains("SMTP 发信测试失败"))
+    }
+
+    @MainActor
     @Test func customAccountUsesProvidedServerEndpoints() async throws {
         let store = MemorySecretStore()
         let mailService = StubMailService(body: MessageBody(plain: "", html: nil, attachments: []))
@@ -3373,6 +3403,8 @@ final class StubMailService: MailService {
     var movedUID: Int64?
     var movedSourceMailboxID: UUID?
     var movedMailboxID: UUID?
+    var deletedUID: Int64?
+    var deletedMailboxID: UUID?
     var testedAccount: MailAccount?
     var testedPassword: String?
     var mailboxesToReturn: [Mailbox] = []
@@ -3390,6 +3422,7 @@ final class StubMailService: MailService {
     var fetchMailboxFailuresRemaining = 0
     var fetchHeaderFailuresRemaining = 0
     var connectFailureMessage = "stub connect failure"
+    var outgoingTestFailureMessage: String?
     var fetchMailboxFailureMessage = "stub mailbox failure"
     var fetchHeaderFailureMessage = "stub header failure"
     var idleMailboxID: UUID?
@@ -3411,6 +3444,19 @@ final class StubMailService: MailService {
     func testConnection(_ account: MailAccount, password: String) async throws {
         testedAccount = account
         testedPassword = password
+    }
+
+    func testIncomingConnection(_ account: MailAccount, password: String) async throws {
+        testedAccount = account
+        testedPassword = password
+    }
+
+    func testOutgoingConnection(_ account: MailAccount, password: String) async throws {
+        testedAccount = account
+        testedPassword = password
+        if let outgoingTestFailureMessage {
+            throw MailServiceError.connectionFailed(outgoingTestFailureMessage)
+        }
     }
 
     func fetchMailboxes() async throws -> [Mailbox] {
@@ -3470,9 +3516,15 @@ final class StubMailService: MailService {
         movedMailboxID = targetMailbox.id
     }
 
-    func saveDraft(_ draft: OutgoingMessage, to draftsMailbox: Mailbox) async throws {
+    func deleteMessage(uid: Int64, from mailbox: Mailbox) async throws {
+        deletedUID = uid
+        deletedMailboxID = mailbox.id
+    }
+
+    func saveDraft(_ draft: OutgoingMessage, to draftsMailbox: Mailbox) async throws -> Int64? {
         savedDrafts.append(draft)
         savedDraftMailboxID = draftsMailbox.id
+        return nil
     }
 
     func sendMessage(_ draft: OutgoingMessage, appendTo sentMailbox: Mailbox?) async throws {

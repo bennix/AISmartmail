@@ -399,6 +399,8 @@ struct MailCredentialResolver {
 protocol MailService {
     func connect(_ account: MailAccount) async throws
     func testConnection(_ account: MailAccount, password: String) async throws
+    func testIncomingConnection(_ account: MailAccount, password: String) async throws
+    func testOutgoingConnection(_ account: MailAccount, password: String) async throws
     func fetchMailboxes() async throws -> [Mailbox]
     func fetchLatestHeaders(mailbox: Mailbox, limit: Int) async throws -> [MessageHeader]
     func fetchHeadersBefore(mailbox: Mailbox, beforeUID: Int64, limit: Int) async throws -> [MessageHeader]
@@ -447,6 +449,11 @@ actor NativeMailService: @preconcurrency MailService {
     }
 
     func testConnection(_ account: MailAccount, password: String) async throws {
+        try await testIncomingConnection(account, password: password)
+        try await testOutgoingConnection(account, password: password)
+    }
+
+    func testIncomingConnection(_ account: MailAccount, password: String) async throws {
         let credentials = MailConnectionCredentials(username: account.emailAddress, secret: password, authType: account.authType)
         switch account.useProtocol {
         case .imap:
@@ -457,6 +464,10 @@ actor NativeMailService: @preconcurrency MailService {
             }
             try POP3Client(endpoint: pop3, credentials: credentials).verify()
         }
+    }
+
+    func testOutgoingConnection(_ account: MailAccount, password: String) async throws {
+        let credentials = MailConnectionCredentials(username: account.emailAddress, secret: password, authType: account.authType)
         try SMTPClient(endpoint: account.smtp, credentials: credentials).verify(from: account.emailAddress)
     }
 

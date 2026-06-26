@@ -400,7 +400,7 @@ struct ProviderPreset: Hashable, Sendable {
             return ProviderPreset(
                 provider: provider,
                 imap: ServerEndpoint(host: "imap.gmail.com", port: 993, tlsMode: "SSL"),
-                smtp: ServerEndpoint(host: "smtp.gmail.com", port: 465, tlsMode: "SSL"),
+                smtp: ServerEndpoint(host: "smtp.gmail.com", port: 587, tlsMode: "STARTTLS"),
                 pop3: ServerEndpoint(host: "pop.gmail.com", port: 995, tlsMode: "SSL"),
                 appPasswordHelpURL: URL(string: "https://myaccount.google.com/apppasswords"),
                 inlineNote: "推荐使用“浏览器登录”连接 Google 账号；应用专用密码仅作为开启两步验证后的备用方式。"

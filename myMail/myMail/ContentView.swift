@@ -1186,7 +1186,7 @@ struct SettingsView: View {
                             )
                             if didPass, signature == currentAccountConnectionSignature {
                                 testedAccountSignature = signature
-                                accountConnectionFeedback = viewModel.localized(.connectionTestPassedCanSave)
+                                accountConnectionFeedback = viewModel.statusMessage.isEmpty ? viewModel.localized(.connectionTestPassedCanSave) : viewModel.statusMessage
                             } else if signature == currentAccountConnectionSignature {
                                 testedAccountSignature = nil
                                 accountConnectionFeedback = viewModel.statusMessage
@@ -1330,18 +1330,22 @@ struct SettingsView: View {
 
     private var accountConnectionFeedbackIcon: String {
         if isTestingAccountConnection { return "antenna.radiowaves.left.and.right" }
-        if isCurrentAccountConnectionTested { return "checkmark.circle.fill" }
+        if isCurrentAccountConnectionTested {
+            return accountConnectionFeedback?.contains("失败") == true ? "exclamationmark.circle" : "checkmark.circle.fill"
+        }
         return "exclamationmark.circle"
     }
 
     private var accountConnectionFeedbackText: String {
-        if isCurrentAccountConnectionTested { return viewModel.localized(.connectionTestPassedCanSave) }
+        if isCurrentAccountConnectionTested { return accountConnectionFeedback ?? viewModel.localized(.connectionTestPassedCanSave) }
         if testedAccountSignature != nil { return viewModel.localized(.accountInfoChangedRetest) }
         return accountConnectionFeedback ?? viewModel.localized(.accountConnectionInitialFeedback)
     }
 
     private var accountConnectionFeedbackColor: Color {
-        if isCurrentAccountConnectionTested { return .green }
+        if isCurrentAccountConnectionTested {
+            return accountConnectionFeedback?.contains("失败") == true ? .orange : .green
+        }
         if isTestingAccountConnection { return .secondary }
         return .orange
     }

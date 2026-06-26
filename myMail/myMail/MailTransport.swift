@@ -633,6 +633,9 @@ final class LineSocket: MailLineConnection {
     private var input: InputStream?
     private var output: OutputStream?
     private var pendingBytes = Data()
+    private var sslSettingsKey: Stream.PropertyKey {
+        Stream.PropertyKey(rawValue: kCFStreamPropertySSLSettings as String)
+    }
 
     init(endpoint: ServerEndpoint) {
         self.host = endpoint.host
@@ -653,8 +656,8 @@ final class LineSocket: MailLineConnection {
         }
 
         if tlsMode == "SSL" {
-            readStream.setProperty(StreamSocketSecurityLevel.negotiatedSSL, forKey: .socketSecurityLevelKey)
-            writeStream.setProperty(StreamSocketSecurityLevel.negotiatedSSL, forKey: .socketSecurityLevelKey)
+            configureTLS(readStream)
+            configureTLS(writeStream)
         }
         readStream.open()
         writeStream.open()
@@ -679,8 +682,8 @@ final class LineSocket: MailLineConnection {
         guard let input, let output else {
             throw MailServiceError.connectionFailed("连接尚未打开")
         }
-        input.setProperty(StreamSocketSecurityLevel.negotiatedSSL, forKey: .socketSecurityLevelKey)
-        output.setProperty(StreamSocketSecurityLevel.negotiatedSSL, forKey: .socketSecurityLevelKey)
+        configureTLS(input)
+        configureTLS(output)
         pendingBytes.removeAll()
 
         let deadline = Date().addingTimeInterval(10)
@@ -702,6 +705,11 @@ final class LineSocket: MailLineConnection {
         input = nil
         output = nil
         pendingBytes.removeAll()
+    }
+
+    private func configureTLS(_ stream: Stream) {
+        stream.setProperty(StreamSocketSecurityLevel.negotiatedSSL, forKey: .socketSecurityLevelKey)
+        stream.setProperty([kCFStreamSSLPeerName as String: host], forKey: sslSettingsKey)
     }
 
     func sendLine(_ line: String) throws {

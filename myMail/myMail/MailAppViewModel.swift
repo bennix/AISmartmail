@@ -2077,10 +2077,21 @@ final class MailAppViewModel: ObservableObject {
                 createdAt: Date(),
                 needsReauth: false
             )
-            statusMessage = "正在测试 \(useProtocol.rawValue.uppercased()) 与 SMTP..."
-            try await mailServiceFactory().testConnection(account, password: normalizedPassword)
-            statusMessage = "连接测试通过。"
-            return true
+            let service = mailServiceFactory()
+            statusMessage = "正在测试 \(useProtocol.rawValue.uppercased()) 收信..."
+            try await service.testIncomingConnection(account, password: normalizedPassword)
+            statusMessage = "收信测试通过，正在测试 SMTP 发信..."
+            do {
+                try await service.testOutgoingConnection(account, password: normalizedPassword)
+                statusMessage = "连接测试通过。"
+                return true
+            } catch {
+                if provider == .gmail {
+                    statusMessage = "Gmail 收信测试通过；SMTP 发信测试失败：\(error.localizedDescription)。可以先保存账户用于收信；若要发送邮件，请确认当前网络允许连接 smtp.gmail.com:587 STARTTLS 或 465 SSL/TLS。"
+                    return true
+                }
+                throw error
+            }
         } catch {
             if provider == .gmail {
                 statusMessage = localized(.gmailConnectionFailedHint, error.localizedDescription)
