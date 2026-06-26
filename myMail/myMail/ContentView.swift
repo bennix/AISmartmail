@@ -1051,7 +1051,12 @@ struct SettingsView: View {
                     Text("POP3").tag(MailProtocolChoice.pop3)
                 }
                 .pickerStyle(.segmented)
-                .disabled(preset.pop3 == nil)
+                .disabled(accountProvider == .gmail || preset.pop3 == nil)
+                .onChange(of: accountProtocol) { _, newValue in
+                    if accountProvider == .gmail && newValue != .imap {
+                        accountProtocol = .imap
+                    }
+                }
 
                 Text(accountServerSummary)
                     .font(.caption)
@@ -1155,14 +1160,14 @@ struct SettingsView: View {
                     Spacer()
                     Button {
                         let signature = currentAccountConnectionSignature
-                        accountConnectionFeedback = viewModel.localized(.testingMailConnection, accountProtocol.rawValue.uppercased())
+                        accountConnectionFeedback = viewModel.localized(.testingMailConnection, effectiveAccountProtocol.rawValue.uppercased())
                         Task {
                             isTestingAccountConnection = true
                             let didPass = await viewModel.testAccountConnection(
                                 provider: accountProvider,
                                 email: accountEmail,
                                 password: accountPassword,
-                                useProtocol: accountProtocol,
+                                useProtocol: effectiveAccountProtocol,
                                 customIMAP: customIMAPEndpoint,
                                 customSMTP: customSMTPEndpoint,
                                 customPOP3: customPOP3Endpoint
@@ -1190,7 +1195,7 @@ struct SettingsView: View {
                             provider: accountProvider,
                             email: accountEmail,
                             password: accountPassword,
-                            useProtocol: accountProtocol,
+                            useProtocol: effectiveAccountProtocol,
                             customIMAP: customIMAPEndpoint,
                             customSMTP: customSMTPEndpoint,
                             customPOP3: customPOP3Endpoint
@@ -1291,10 +1296,14 @@ struct SettingsView: View {
             !accountPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var effectiveAccountProtocol: MailProtocolChoice {
+        accountProvider == .gmail ? .imap : accountProtocol
+    }
+
     private var currentAccountConnectionSignature: String {
         [
             accountProvider.rawValue,
-            accountProtocol.rawValue,
+            effectiveAccountProtocol.rawValue,
             accountEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
             accountPassword,
             customIMAPEndpoint?.label ?? "",

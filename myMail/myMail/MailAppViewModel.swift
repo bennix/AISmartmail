@@ -325,6 +325,12 @@ final class MailAppViewModel: ObservableObject {
         return nil
     }
 
+    private func normalizedAppPassword(_ password: String, provider: MailProvider) -> String {
+        let trimmed = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard provider == .gmail else { return trimmed }
+        return trimmed.filter { !$0.isWhitespace }
+    }
+
     private func computeVisibleMessages() -> [MailMessage] {
         let scoped = messages.filter { message in
             if selectedSmartMailbox == .starred {
@@ -2050,7 +2056,8 @@ final class MailAppViewModel: ObservableObject {
         customPOP3: ServerEndpoint? = nil
     ) async -> Bool {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedEmail.isEmpty, !password.isEmpty else {
+        let normalizedPassword = normalizedAppPassword(password, provider: provider)
+        guard !trimmedEmail.isEmpty, !normalizedPassword.isEmpty else {
             statusMessage = provider == .gmail ? localized(.gmailAppPasswordRequired) : "请填写邮箱地址和客户端专用密码。"
             return false
         }
@@ -2071,7 +2078,7 @@ final class MailAppViewModel: ObservableObject {
                 needsReauth: false
             )
             statusMessage = "正在测试 \(useProtocol.rawValue.uppercased()) 与 SMTP..."
-            try await mailServiceFactory().testConnection(account, password: password)
+            try await mailServiceFactory().testConnection(account, password: normalizedPassword)
             statusMessage = "连接测试通过。"
             return true
         } catch {
@@ -2096,6 +2103,11 @@ final class MailAppViewModel: ObservableObject {
         do {
             let preset = try resolvedPreset(provider: provider, useProtocol: useProtocol, customIMAP: customIMAP, customSMTP: customSMTP, customPOP3: customPOP3)
             let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedPassword = normalizedAppPassword(password, provider: provider)
+            guard !trimmedEmail.isEmpty, !normalizedPassword.isEmpty else {
+                statusMessage = provider == .gmail ? localized(.gmailAppPasswordRequired) : "请填写邮箱地址和客户端专用密码。"
+                return
+            }
             let account = MailAccount(
                 id: UUID(),
                 displayName: trimmedEmail,
@@ -2110,7 +2122,7 @@ final class MailAppViewModel: ObservableObject {
                 createdAt: Date(),
                 needsReauth: false
             )
-            try secretStore.save(password, account: "account.\(account.id.uuidString).password")
+            try secretStore.save(normalizedPassword, account: "account.\(account.id.uuidString).password")
             accounts.append(account)
             if useProtocol == .pop3 {
                 mailboxes.append(Mailbox(id: UUID(), accountId: account.id, name: "INBOX", role: .inbox, uidValidity: 1, unreadCount: 0))
@@ -2295,13 +2307,13 @@ final class MailAppViewModel: ObservableObject {
     }
 
     func updateAccountPassword(accountID: UUID, password: String) {
-        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPassword.isEmpty else {
-            statusMessage = "请填写新的客户端专用密码。"
-            return
-        }
         guard let index = accounts.firstIndex(where: { $0.id == accountID }) else {
             statusMessage = "未找到账户。"
+            return
+        }
+        let trimmedPassword = normalizedAppPassword(password, provider: accounts[index].provider)
+        guard !trimmedPassword.isEmpty else {
+            statusMessage = "请填写新的客户端专用密码。"
             return
         }
         do {
