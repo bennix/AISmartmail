@@ -28,8 +28,8 @@ struct myMailTests {
         #expect(gmail.imap.host == "imap.gmail.com")
         #expect(gmail.imap.port == 993)
         #expect(gmail.smtp.host == "smtp.gmail.com")
-        #expect(gmail.smtp.port == 587)
-        #expect(gmail.smtp.tlsMode == "STARTTLS")
+        #expect(gmail.smtp.port == 465)
+        #expect(gmail.smtp.tlsMode == "SSL")
         #expect(gmail.pop3?.host == "pop.gmail.com")
         #expect(gmail.pop3?.port == 995)
         #expect(gmail.supportsOAuth2)
@@ -71,7 +71,7 @@ struct myMailTests {
         var account = MailAccount.demo()
         account.provider = .gmail
         account.imap = preset.imap
-        account.smtp = ServerEndpoint(host: "smtp.gmail.com", port: 465, tlsMode: "SSL")
+        account.smtp = ServerEndpoint(host: "smtp.gmail.com", port: 587, tlsMode: "STARTTLS")
         account.pop3 = preset.pop3
         let store = MemoryMailStore(snapshot: MailStoreSnapshot(accounts: [account], mailboxes: [], messages: [], attachments: []))
 

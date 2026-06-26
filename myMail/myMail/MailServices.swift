@@ -443,7 +443,7 @@ actor NativeMailService: @preconcurrency MailService {
         guard let secret = try await credentialResolver.authSecret(for: account), !secret.isEmpty else {
             throw MailServiceError.missingPassword
         }
-        try await testConnection(account, password: secret)
+        try await testIncomingConnection(account, password: secret)
         connectedAccount = account
         authSecret = secret
     }
@@ -468,7 +468,9 @@ actor NativeMailService: @preconcurrency MailService {
 
     func testOutgoingConnection(_ account: MailAccount, password: String) async throws {
         let credentials = MailConnectionCredentials(username: account.emailAddress, secret: password, authType: account.authType)
-        try SMTPClient(endpoint: account.smtp, credentials: credentials).verify(from: account.emailAddress)
+        try trySMTPFallbacks(for: account, credentials: credentials) { client in
+            try client.verify(from: account.emailAddress)
+        }
     }
 
     func fetchMailboxes() async throws -> [Mailbox] {
@@ -587,7 +589,9 @@ actor NativeMailService: @preconcurrency MailService {
             throw MailServiceError.malformedServerResponse("缺少收件人")
         }
         let data = try mimeBuilder.makeMessage(from: account, draft: draft)
-        try SMTPClient(endpoint: account.smtp, credentials: credentials).send(message: data, from: account.emailAddress, recipients: recipients)
+        try trySMTPFallbacks(for: account, credentials: credentials) { client in
+            try client.send(message: data, from: account.emailAddress, recipients: recipients)
+        }
         if account.useProtocol == .imap, let sentMailbox {
             _ = try IMAPClient(endpoint: account.imap, credentials: credentials).appendMessage(data, to: sentMailbox)
         }
@@ -625,6 +629,41 @@ actor NativeMailService: @preconcurrency MailService {
         }
         authSecret = secret
         return (account, MailConnectionCredentials(username: account.emailAddress, secret: secret, authType: account.authType))
+    }
+
+    private func trySMTPFallbacks(
+        for account: MailAccount,
+        credentials: MailConnectionCredentials,
+        operation: (SMTPClient) throws -> Void
+    ) throws {
+        var lastError: Error?
+        for endpoint in smtpFallbackEndpoints(for: account) {
+            do {
+                try operation(SMTPClient(endpoint: endpoint, credentials: credentials))
+                return
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? MailServiceError.connectionFailed(account.smtp.label)
+    }
+
+    private func smtpFallbackEndpoints(for account: MailAccount) -> [ServerEndpoint] {
+        var endpoints: [ServerEndpoint]
+        if account.provider == .gmail {
+            endpoints = [
+                ServerEndpoint(host: "smtp.gmail.com", port: 465, tlsMode: "SSL"),
+                account.smtp,
+                ServerEndpoint(host: "smtp.gmail.com", port: 587, tlsMode: "STARTTLS")
+            ]
+        } else {
+            endpoints = [account.smtp]
+        }
+        var seen = Set<String>()
+        return endpoints.filter { endpoint in
+            let key = "\(endpoint.host.lowercased()):\(endpoint.port):\(endpoint.normalizedTLSMode)"
+            return seen.insert(key).inserted
+        }
     }
 }
 
