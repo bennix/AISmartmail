@@ -776,8 +776,11 @@ struct myMailTests {
             useProtocol: .imap
         ))
         let state = try #require(URLComponents(url: authURL, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "state" }?.value)
+        let redirectURI = try #require(URLComponents(url: authURL, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "redirect_uri" }?.value)
+        #expect(redirectURI.hasPrefix("http://127.0.0.1:"))
+        #expect(redirectURI.hasSuffix("/oauth/gmail"))
 
-        await viewModel.handleOAuthCallback(URL(string: "mymail://oauth/gmail?code=callback-code&state=\(state)")!)
+        await viewModel.handleOAuthCallback(URL(string: "\(redirectURI)?code=callback-code&state=\(state)")!)
 
         let account = try #require(viewModel.accounts.first { $0.emailAddress == "oauth@example.com" })
         #expect(account.authType == .oauth2)

@@ -5,6 +5,7 @@
 
 import Combine
 import Foundation
+import Network
 
 enum APIKeyTestState {
     case idle
@@ -2196,9 +2197,16 @@ final class MailAppViewModel: ObservableObject {
                 return nil
             }
 
+            pendingOAuthLogin?.loopbackServer?.stop()
             let state = UUID().uuidString
             let pkce = oauth2Service.makePKCEPair()
-            let redirectURI = "mymail://oauth/\(provider.rawValue)"
+            let loopbackServer = try OAuthLoopbackServer(path: "/oauth/\(provider.rawValue)") { [weak self] url in
+                Task { @MainActor in
+                    await self?.handleOAuthCallback(url)
+                }
+            }
+            loopbackServer.start()
+            let redirectURI = loopbackServer.redirectURI
             let url = try oauth2Service.makeAuthorizationURL(
                 provider: provider,
                 clientID: trimmedClientID,
@@ -2213,7 +2221,8 @@ final class MailAppViewModel: ObservableObject {
                 clientID: trimmedClientID,
                 redirectURI: redirectURI,
                 state: state,
-                codeVerifier: pkce.verifier
+                codeVerifier: pkce.verifier,
+                loopbackServer: loopbackServer
             )
             statusMessage = "已打开 \(provider.title) OAuth 登录，请在浏览器完成授权。"
             return url
@@ -2224,29 +2233,36 @@ final class MailAppViewModel: ObservableObject {
     }
 
     func handleOAuthCallback(_ url: URL) async {
-        guard url.scheme == "mymail", url.host == "oauth" else { return }
+        guard isSupportedOAuthCallback(url) else { return }
         guard let pendingOAuthLogin else {
             statusMessage = "没有正在进行的 OAuth 登录。"
             return
         }
-        let callbackProvider = url.pathComponents.dropFirst().first.flatMap(MailProvider.init(rawValue:))
+        let callbackProvider = oauthCallbackProvider(from: url)
         guard callbackProvider == pendingOAuthLogin.provider else {
             statusMessage = "OAuth 回调服务商不匹配。"
+            pendingOAuthLogin.loopbackServer?.stop()
+            self.pendingOAuthLogin = nil
             return
         }
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let items = components?.queryItems ?? []
         if let error = items.first(where: { $0.name == "error" })?.value {
             statusMessage = "OAuth 登录失败：\(error)"
+            pendingOAuthLogin.loopbackServer?.stop()
             self.pendingOAuthLogin = nil
             return
         }
         guard items.first(where: { $0.name == "state" })?.value == pendingOAuthLogin.state else {
             statusMessage = "OAuth state 校验失败，请重新登录。"
+            pendingOAuthLogin.loopbackServer?.stop()
+            self.pendingOAuthLogin = nil
             return
         }
         guard let code = items.first(where: { $0.name == "code" })?.value, !code.isEmpty else {
             statusMessage = "OAuth 回调缺少授权码。"
+            pendingOAuthLogin.loopbackServer?.stop()
+            self.pendingOAuthLogin = nil
             return
         }
 
@@ -2264,11 +2280,27 @@ final class MailAppViewModel: ObservableObject {
                 tokenSet: tokenSet,
                 useProtocol: pendingOAuthLogin.useProtocol
             )
+            pendingOAuthLogin.loopbackServer?.stop()
             self.pendingOAuthLogin = nil
             statusMessage = "OAuth2 登录完成，凭据仅写入 Keychain。"
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    private func isSupportedOAuthCallback(_ url: URL) -> Bool {
+        if url.scheme == "mymail", url.host == "oauth" {
+            return true
+        }
+        return url.scheme == "http" && (url.host == "127.0.0.1" || url.host == "localhost")
+    }
+
+    private func oauthCallbackProvider(from url: URL) -> MailProvider? {
+        if url.scheme == "mymail", url.host == "oauth" {
+            return url.pathComponents.dropFirst().first.flatMap(MailProvider.init(rawValue:))
+        }
+        guard url.scheme == "http" else { return nil }
+        return url.pathComponents.dropFirst().dropFirst().first.flatMap(MailProvider.init(rawValue:))
     }
 
     private func saveOAuthAccount(
@@ -4456,6 +4488,120 @@ struct AppSettings: Codable, Hashable {
     }
 }
 
+private final class OAuthLoopbackServer {
+    let redirectURI: String
+
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "fudan.miniS.myMail.oauth-loopback")
+    private let path: String
+    private let callback: @Sendable (URL) -> Void
+
+    init(path: String, callback: @escaping @Sendable (URL) -> Void) throws {
+        let port = try Self.availableLoopbackPort()
+        self.listener = try NWListener(using: .tcp, on: port)
+        self.path = path
+        self.callback = callback
+        self.redirectURI = "http://127.0.0.1:\(port.rawValue)\(path)"
+    }
+
+    func start() {
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.handle(connection)
+        }
+        listener.start(queue: queue)
+    }
+
+    func stop() {
+        listener.cancel()
+    }
+
+    private func handle(_ connection: NWConnection) {
+        connection.start(queue: queue)
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self] data, _, _, _ in
+            guard let self else {
+                connection.cancel()
+                return
+            }
+            guard
+                let data,
+                let request = String(data: data, encoding: .utf8),
+                let url = self.callbackURL(from: request)
+            else {
+                self.respond(connection, status: "400 Bad Request", body: "OAuth callback request is invalid.")
+                return
+            }
+            self.callback(url)
+            self.respond(connection, status: "200 OK", body: "OAuth 登录完成，可以回到 AISmartmail。")
+            self.stop()
+        }
+    }
+
+    private func callbackURL(from request: String) -> URL? {
+        guard let requestLine = request.components(separatedBy: "\r\n").first else { return nil }
+        let parts = requestLine.split(separator: " ")
+        guard parts.count >= 2, parts[0] == "GET" else { return nil }
+        let target = String(parts[1])
+        guard target.hasPrefix(path) else { return nil }
+        return URL(string: "http://127.0.0.1\(target)")
+    }
+
+    private func respond(_ connection: NWConnection, status: String, body: String) {
+        let html = """
+        <!doctype html><html><head><meta charset="utf-8"><title>AISmartmail OAuth</title></head><body><p>\(body)</p></body></html>
+        """
+        let response = """
+        HTTP/1.1 \(status)\r
+        Content-Type: text/html; charset=utf-8\r
+        Content-Length: \(html.utf8.count)\r
+        Connection: close\r
+        \r
+        \(html)
+        """
+        connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+    }
+
+    private static func availableLoopbackPort() throws -> NWEndpoint.Port {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            throw MailServiceError.connectionFailed("无法创建 OAuth 本地回调端口")
+        }
+        defer { close(descriptor) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+
+        let bindResult = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { rebound in
+                bind(descriptor, rebound, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bindResult == 0 else {
+            throw MailServiceError.connectionFailed("无法绑定 OAuth 本地回调端口")
+        }
+
+        var boundAddress = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let nameResult = withUnsafeMutablePointer(to: &boundAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { rebound in
+                getsockname(descriptor, rebound, &length)
+            }
+        }
+        guard nameResult == 0 else {
+            throw MailServiceError.connectionFailed("无法读取 OAuth 本地回调端口")
+        }
+        let portNumber = UInt16(bigEndian: boundAddress.sin_port)
+        guard let port = NWEndpoint.Port(rawValue: portNumber), portNumber > 0 else {
+            throw MailServiceError.connectionFailed("OAuth 本地回调端口无效")
+        }
+        return port
+    }
+}
+
 private struct PendingOAuthLogin {
     var provider: MailProvider
     var email: String
@@ -4464,6 +4610,7 @@ private struct PendingOAuthLogin {
     var redirectURI: String
     var state: String
     var codeVerifier: String
+    var loopbackServer: OAuthLoopbackServer?
 }
 
 protocol SettingsStore {
