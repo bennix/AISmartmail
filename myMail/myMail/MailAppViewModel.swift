@@ -242,6 +242,26 @@ final class MailAppViewModel: ObservableObject {
         return loadingMoreMailboxIDs.contains(selectedMailboxID)
     }
 
+    var showsLoadMoreSelectedMailboxControl: Bool {
+        guard let selectedMailbox,
+              let account = accounts.first(where: { $0.id == selectedMailbox.accountId }),
+              account.useProtocol == .imap else { return false }
+        return visibleMessages.contains { $0.mailboxId == selectedMailbox.id }
+            || exhaustedOlderMailboxIDs.contains(selectedMailbox.id)
+            || loadingMoreMailboxIDs.contains(selectedMailbox.id)
+    }
+
+    var canLoadMoreSelectedMailbox: Bool {
+        guard let selectedMailbox,
+              let account = accounts.first(where: { $0.id == selectedMailbox.accountId }),
+              account.useProtocol == .imap,
+              !loadingMoreMailboxIDs.contains(selectedMailbox.id),
+              !exhaustedOlderMailboxIDs.contains(selectedMailbox.id) else { return false }
+        let mailboxMessages = messages.filter { $0.accountId == account.id && $0.mailboxId == selectedMailbox.id }
+        guard let oldestUID = mailboxMessages.map(\.uid).min() else { return false }
+        return oldestUID > 1
+    }
+
     var visibleMailboxes: [Mailbox] {
         guard let selectedAccountID else { return [] }
         return mailboxes.filter { $0.accountId == selectedAccountID }
@@ -951,9 +971,15 @@ final class MailAppViewModel: ObservableObject {
         return initialHeaders
     }
 
-    func loadMoreMessagesIfNeeded(currentMessage message: MailMessage) async {
-        guard visibleMessages.suffix(8).contains(where: { $0.id == message.id }) else { return }
-        guard Date() >= automaticLoadMoreSuppressedUntil else { return }
+    func loadMoreSelectedMailboxMessages() async {
+        guard let selectedMailboxID,
+              let message = visibleMessages.last(where: { $0.mailboxId == selectedMailboxID }) else { return }
+        await loadMoreMessagesIfNeeded(currentMessage: message, requiresNearEnd: false)
+    }
+
+    func loadMoreMessagesIfNeeded(currentMessage message: MailMessage, requiresNearEnd: Bool = true) async {
+        guard !requiresNearEnd || visibleMessages.suffix(8).contains(where: { $0.id == message.id }) else { return }
+        guard !requiresNearEnd || Date() >= automaticLoadMoreSuppressedUntil else { return }
         guard let mailbox = selectedMailbox, mailbox.id == message.mailboxId else { return }
         guard let account = accounts.first(where: { $0.id == mailbox.accountId }), account.useProtocol == .imap else { return }
         guard !loadingMoreMailboxIDs.contains(mailbox.id), !exhaustedOlderMailboxIDs.contains(mailbox.id) else { return }
@@ -2903,6 +2929,9 @@ enum AppText: String, CaseIterable {
     case saveAs
     case recipient
     case sendingRoute
+    case loadMoreMessages
+    case loadingOlderMessages
+    case noMoreMessages
     case cc
     case subject
     case aiInstruction
@@ -3459,6 +3488,9 @@ struct AppLocalizer {
             .saveAs: "另存为...",
             .recipient: "收件人",
             .sendingRoute: "发信路径",
+            .loadMoreMessages: "加载更多",
+            .loadingOlderMessages: "正在加载更早的邮件...",
+            .noMoreMessages: "没有更多邮件",
             .cc: "抄送",
             .subject: "主题",
             .aiInstruction: "AI 指令",
@@ -3569,6 +3601,9 @@ struct AppLocalizer {
             .saveAs: "另存為...",
             .recipient: "收件人",
             .sendingRoute: "寄送路徑",
+            .loadMoreMessages: "載入更多",
+            .loadingOlderMessages: "正在載入更早的郵件...",
+            .noMoreMessages: "沒有更多郵件",
             .cc: "副本",
             .subject: "主旨",
             .aiInstruction: "AI 指令",
@@ -3668,6 +3703,9 @@ struct AppLocalizer {
             .saveAs: "Save As...",
             .recipient: "To",
             .sendingRoute: "Sending Route",
+            .loadMoreMessages: "Load More",
+            .loadingOlderMessages: "Loading older messages...",
+            .noMoreMessages: "No more messages",
             .cc: "Cc",
             .subject: "Subject",
             .aiInstruction: "AI Instruction",
@@ -3778,6 +3816,9 @@ struct AppLocalizer {
             .saveAs: "別名で保存...",
             .recipient: "宛先",
             .sendingRoute: "送信経路",
+            .loadMoreMessages: "さらに読み込む",
+            .loadingOlderMessages: "古いメールを読み込み中...",
+            .noMoreMessages: "これ以上メールはありません",
             .cc: "Cc",
             .subject: "件名",
             .aiInstruction: "AI 指示",
@@ -3877,6 +3918,9 @@ struct AppLocalizer {
             .saveAs: "다른 이름으로 저장...",
             .recipient: "받는 사람",
             .sendingRoute: "발신 경로",
+            .loadMoreMessages: "더 불러오기",
+            .loadingOlderMessages: "이전 메일을 불러오는 중...",
+            .noMoreMessages: "더 이상 메일이 없습니다",
             .cc: "참조",
             .subject: "제목",
             .aiInstruction: "AI 지시",
@@ -3976,6 +4020,9 @@ struct AppLocalizer {
             .saveAs: "Enregistrer sous...",
             .recipient: "À",
             .sendingRoute: "Compte d'envoi",
+            .loadMoreMessages: "Charger plus",
+            .loadingOlderMessages: "Chargement des anciens messages...",
+            .noMoreMessages: "Aucun autre message",
             .cc: "Cc",
             .subject: "Objet",
             .aiInstruction: "Instruction IA",
@@ -4075,6 +4122,9 @@ struct AppLocalizer {
             .saveAs: "Сохранить как...",
             .recipient: "Кому",
             .sendingRoute: "Маршрут отправки",
+            .loadMoreMessages: "Загрузить еще",
+            .loadingOlderMessages: "Загрузка старых писем...",
+            .noMoreMessages: "Больше писем нет",
             .cc: "Копия",
             .subject: "Тема",
             .aiInstruction: "Инструкция ИИ",
@@ -4174,6 +4224,9 @@ struct AppLocalizer {
             .saveAs: "Spara som...",
             .recipient: "Till",
             .sendingRoute: "Sändningsväg",
+            .loadMoreMessages: "Läs in fler",
+            .loadingOlderMessages: "Läser in äldre mejl...",
+            .noMoreMessages: "Inga fler mejl",
             .cc: "Kopia",
             .subject: "Ämne",
             .aiInstruction: "AI-instruktion",
@@ -4257,6 +4310,9 @@ struct AppLocalizer {
             .saveAs: "Зберегти як...",
             .recipient: "Кому",
             .sendingRoute: "Шлях надсилання",
+            .loadMoreMessages: "Завантажити ще",
+            .loadingOlderMessages: "Завантаження старіших листів...",
+            .noMoreMessages: "Більше листів немає",
             .cc: "Копія",
             .subject: "Тема",
             .aiInstruction: "Інструкція ШІ",
@@ -4340,6 +4396,9 @@ struct AppLocalizer {
             .saveAs: "Tallenna nimellä...",
             .recipient: "Vastaanottaja",
             .sendingRoute: "Lähetysreitti",
+            .loadMoreMessages: "Lataa lisää",
+            .loadingOlderMessages: "Ladataan vanhempia viestejä...",
+            .noMoreMessages: "Ei lisää viestejä",
             .cc: "Kopio",
             .subject: "Aihe",
             .aiInstruction: "AI-ohje",

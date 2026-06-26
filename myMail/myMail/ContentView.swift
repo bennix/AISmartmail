@@ -192,22 +192,29 @@ private struct MessageListView: View {
 
             List(selection: $viewModel.selectedMessageID) {
                 let visibleMessages = viewModel.visibleMessages
-                let loadMoreTriggerID = visibleMessages.suffix(8).first?.id
                 ForEach(visibleMessages) { message in
                     MessageRow(message: message)
                         .tag(message.id)
-                        .onAppear {
-                            guard message.id == loadMoreTriggerID else { return }
-                            Task { await viewModel.loadMoreMessagesIfNeeded(currentMessage: message) }
-                        }
                 }
-                if viewModel.isLoadingMoreSelectedMailbox {
-                    Text("正在加载更早的邮件...")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 8)
-                        .listRowSeparator(.hidden)
+                if viewModel.showsLoadMoreSelectedMailboxControl {
+                    HStack {
+                        Spacer()
+                        if viewModel.isLoadingMoreSelectedMailbox {
+                            Button(viewModel.localized(.loadingOlderMessages)) {}
+                                .disabled(true)
+                        } else if viewModel.canLoadMoreSelectedMailbox {
+                            Button(viewModel.localized(.loadMoreMessages)) {
+                                Task { await viewModel.loadMoreSelectedMailboxMessages() }
+                            }
+                        } else {
+                            Text(viewModel.localized(.noMoreMessages))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 8)
+                    .listRowSeparator(.hidden)
                 }
             }
             .id(viewModel.messageListResetID)

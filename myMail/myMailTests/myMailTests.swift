@@ -1577,6 +1577,12 @@ struct myMailTests {
 
         #expect(mailService.fetchedOlderHeaderRequests.isEmpty)
         #expect(viewModel.messages.map(\.uid) == [40])
+
+        await viewModel.loadMoreSelectedMailboxMessages()
+
+        #expect(mailService.fetchedOlderHeaderRequests.count == 1)
+        #expect(mailService.fetchedOlderHeaderRequests.first?.beforeUID == 40)
+        #expect(viewModel.messages.map(\.uid).sorted() == [39, 40])
     }
 
     @MainActor
