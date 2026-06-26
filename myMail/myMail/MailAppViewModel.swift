@@ -930,7 +930,10 @@ final class MailAppViewModel: ObservableObject {
         if let primary = mailboxToSync(for: account, preferredMailboxID: preferredMailboxID) {
             targets.append(primary)
         }
-        for mailbox in accountMailboxes where mailbox.role == .junk && !targets.contains(where: { $0.id == mailbox.id }) {
+        for mailbox in accountMailboxes
+        where mailbox.role != .drafts
+            && mailbox.role != .trash
+            && !targets.contains(where: { $0.id == mailbox.id }) {
             targets.append(mailbox)
         }
         return targets
@@ -943,27 +946,9 @@ final class MailAppViewModel: ObservableObject {
         service: MailService
     ) async throws -> [MessageHeader] {
         guard account.useProtocol == .imap else { return initialHeaders }
-        let pageLimit = max(settings.cacheMessageLimit, 1)
-        var headers = initialHeaders
-        var seenUIDs = Set(initialHeaders.map(\.uid))
-        var oldestUID = initialHeaders.map(\.uid).min()
         exhaustedOlderMailboxIDs.remove(mailbox.id)
-
-        while let beforeUID = oldestUID, beforeUID > 1 {
-            let olderHeaders = try await withRetry {
-                try await service.fetchHeadersBefore(mailbox: mailbox, beforeUID: beforeUID, limit: pageLimit)
-            }
-            let uniqueOlderHeaders = olderHeaders.filter { $0.uid < beforeUID && seenUIDs.insert($0.uid).inserted }
-            guard !uniqueOlderHeaders.isEmpty else {
-                exhaustedOlderMailboxIDs.insert(mailbox.id)
-                break
-            }
-            headers.append(contentsOf: uniqueOlderHeaders)
-            oldestUID = min(beforeUID, uniqueOlderHeaders.map(\.uid).min() ?? beforeUID)
-            await Task.yield()
-        }
-
-        return headers
+        _ = service
+        return initialHeaders
     }
 
     func loadMoreMessagesIfNeeded(currentMessage message: MailMessage) async {
@@ -1452,40 +1437,47 @@ final class MailAppViewModel: ObservableObject {
     func sendDraft() {
         delayedDraftSyncTask?.cancel()
         let outgoing = draftOutgoingMessage(from: composeDraft)
-        guard let account = selectedAccount else {
+        guard let draftAccount = selectedAccount else {
             statusMessage = "请先选择发件账户。"
             return
         }
-        let sentMailbox = ensureSentMailbox(for: account)
+        let sendingAccount = composeDraft.sendingAccountID.flatMap { sendingID in
+            accounts.first { $0.id == sendingID }
+        } ?? draftAccount
+        let sentMailbox = ensureSentMailbox(for: sendingAccount)
         let syncedDraftMessage = cachedDraftMessageID.flatMap { id in
             messages.first { $0.id == id }
         }
         let syncedDraftMailbox = syncedDraftMessage.flatMap { draftMessage in
             mailboxes.first { $0.id == draftMessage.mailboxId }
         }
-        statusMessage = "正在通过 SMTP 发送，附件 \(outgoing.attachmentURLs.count) 个..."
+        statusMessage = "正在通过 \(sendingAccount.emailAddress) SMTP 发送，附件 \(outgoing.attachmentURLs.count) 个..."
         Task {
             do {
-                try await withAccountOperation(accountID: account.id) {
-                    let service = service(for: account)
-                    try await service.connect(account)
+                try await withAccountOperation(accountID: sendingAccount.id) {
+                    let service = service(for: sendingAccount)
+                    try await service.connect(sendingAccount)
                     try await service.sendMessage(outgoing, appendTo: sentMailbox)
-                    if account.useProtocol == .imap,
-                       let syncedDraftMessage,
-                       let syncedDraftMailbox,
-                       syncedDraftMessage.uid > 0 {
-                        try? await service.deleteMessage(uid: syncedDraftMessage.uid, from: syncedDraftMailbox)
+                }
+                if draftAccount.useProtocol == .imap,
+                   let syncedDraftMessage,
+                   let syncedDraftMailbox,
+                   syncedDraftMessage.uid > 0 {
+                    try? await withAccountOperation(accountID: draftAccount.id) {
+                        let draftService = service(for: draftAccount)
+                        try await draftService.connect(draftAccount)
+                        try await draftService.deleteMessage(uid: syncedDraftMessage.uid, from: syncedDraftMailbox)
                     }
                 }
                 removeCachedDraftMessage()
-                cacheSentMessage(outgoing, account: account, mailbox: sentMailbox)
+                cacheSentMessage(outgoing, account: sendingAccount, mailbox: sentMailbox)
                 releaseAllDraftAttachments()
                 isResettingDraft = true
                 composeDraft = ComposeDraft()
                 isResettingDraft = false
                 statusMessage = "邮件已发送，并已保存到 Sent。"
             } catch {
-                markNeedsReauthIfAuthenticationFailed(accountID: account.id, error: error)
+                markNeedsReauthIfAuthenticationFailed(accountID: sendingAccount.id, error: error)
                 statusMessage = error.localizedDescription
             }
         }
@@ -2190,6 +2182,10 @@ final class MailAppViewModel: ObservableObject {
             let trimmedClientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedEmail.isEmpty, !trimmedClientID.isEmpty else {
                 statusMessage = "请填写邮箱地址和 OAuth Client ID。"
+                return nil
+            }
+            if provider == .gmail && !trimmedClientID.lowercased().hasSuffix(".apps.googleusercontent.com") {
+                statusMessage = "Google OAuth Client ID 无效：请填写 Google Cloud 中 Desktop app / Installed app 类型的 Client ID，通常以 .apps.googleusercontent.com 结尾；不要填写邮箱、项目名称或 Client Secret。"
                 return nil
             }
             guard useProtocol == .imap || preset.pop3 != nil else {
@@ -2906,6 +2902,7 @@ enum AppText: String, CaseIterable {
     case openAttachment
     case saveAs
     case recipient
+    case sendingRoute
     case cc
     case subject
     case aiInstruction
@@ -3461,6 +3458,7 @@ struct AppLocalizer {
             .openAttachment: "打开附件",
             .saveAs: "另存为...",
             .recipient: "收件人",
+            .sendingRoute: "发信路径",
             .cc: "抄送",
             .subject: "主题",
             .aiInstruction: "AI 指令",
@@ -3570,6 +3568,7 @@ struct AppLocalizer {
             .openAttachment: "開啟附件",
             .saveAs: "另存為...",
             .recipient: "收件人",
+            .sendingRoute: "寄送路徑",
             .cc: "副本",
             .subject: "主旨",
             .aiInstruction: "AI 指令",
@@ -3668,6 +3667,7 @@ struct AppLocalizer {
             .openAttachment: "Open Attachment",
             .saveAs: "Save As...",
             .recipient: "To",
+            .sendingRoute: "Sending Route",
             .cc: "Cc",
             .subject: "Subject",
             .aiInstruction: "AI Instruction",
@@ -3777,6 +3777,7 @@ struct AppLocalizer {
             .openAttachment: "添付ファイルを開く",
             .saveAs: "別名で保存...",
             .recipient: "宛先",
+            .sendingRoute: "送信経路",
             .cc: "Cc",
             .subject: "件名",
             .aiInstruction: "AI 指示",
@@ -3875,6 +3876,7 @@ struct AppLocalizer {
             .openAttachment: "첨부 파일 열기",
             .saveAs: "다른 이름으로 저장...",
             .recipient: "받는 사람",
+            .sendingRoute: "발신 경로",
             .cc: "참조",
             .subject: "제목",
             .aiInstruction: "AI 지시",
@@ -3973,6 +3975,7 @@ struct AppLocalizer {
             .openAttachment: "Ouvrir la pièce jointe",
             .saveAs: "Enregistrer sous...",
             .recipient: "À",
+            .sendingRoute: "Compte d'envoi",
             .cc: "Cc",
             .subject: "Objet",
             .aiInstruction: "Instruction IA",
@@ -4071,6 +4074,7 @@ struct AppLocalizer {
             .openAttachment: "Открыть вложение",
             .saveAs: "Сохранить как...",
             .recipient: "Кому",
+            .sendingRoute: "Маршрут отправки",
             .cc: "Копия",
             .subject: "Тема",
             .aiInstruction: "Инструкция ИИ",
@@ -4169,6 +4173,7 @@ struct AppLocalizer {
             .openAttachment: "Öppna bilaga",
             .saveAs: "Spara som...",
             .recipient: "Till",
+            .sendingRoute: "Sändningsväg",
             .cc: "Kopia",
             .subject: "Ämne",
             .aiInstruction: "AI-instruktion",
@@ -4251,6 +4256,7 @@ struct AppLocalizer {
             .openAttachment: "Відкрити вкладення",
             .saveAs: "Зберегти як...",
             .recipient: "Кому",
+            .sendingRoute: "Шлях надсилання",
             .cc: "Копія",
             .subject: "Тема",
             .aiInstruction: "Інструкція ШІ",
@@ -4333,6 +4339,7 @@ struct AppLocalizer {
             .openAttachment: "Avaa liite",
             .saveAs: "Tallenna nimellä...",
             .recipient: "Vastaanottaja",
+            .sendingRoute: "Lähetysreitti",
             .cc: "Kopio",
             .subject: "Aihe",
             .aiInstruction: "AI-ohje",

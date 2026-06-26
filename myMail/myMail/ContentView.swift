@@ -825,6 +825,17 @@ struct ComposeWindowView: View {
         VStack(spacing: 12) {
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
                 GridRow {
+                    Text(viewModel.localized(.sendingRoute))
+                    Picker("", selection: sendingAccountBinding) {
+                        ForEach(viewModel.accounts) { account in
+                            Text("\(account.displayName) <\(account.emailAddress)>")
+                                .tag(account.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .disabled(viewModel.accounts.isEmpty)
+                }
+                GridRow {
                     Text(viewModel.localized(.recipient))
                     TextField("name@example.com", text: draftBinding(\.to))
                 }
@@ -904,6 +915,22 @@ struct ComposeWindowView: View {
             set: { value in
                 viewModel.updateComposeDraft { draft in
                     draft[keyPath: keyPath] = value
+                }
+            }
+        )
+    }
+
+    private var sendingAccountBinding: Binding<UUID> {
+        Binding(
+            get: {
+                viewModel.composeDraft.sendingAccountID
+                ?? viewModel.selectedAccountID
+                ?? viewModel.accounts.first?.id
+                ?? UUID()
+            },
+            set: { accountID in
+                viewModel.updateComposeDraft { draft in
+                    draft.sendingAccountID = accountID
                 }
             }
         )

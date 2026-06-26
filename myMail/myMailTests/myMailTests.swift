@@ -243,6 +243,13 @@ struct myMailTests {
         viewModel.selectedMailboxID = inbox.id
 
         viewModel.refresh()
+        for _ in 0..<50 where viewModel.messages.count < 1 {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        #expect(viewModel.messages.map(\.uid).sorted() == [101])
+        let newest = try #require(viewModel.messages.first { $0.uid == 101 })
+        await viewModel.loadMoreMessagesIfNeeded(currentMessage: newest)
         for _ in 0..<50 where viewModel.messages.count < 2 {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
@@ -251,23 +258,35 @@ struct myMailTests {
         #expect(viewModel.messages.first { $0.uid == 99 }?.flags.contains(.seen) == true)
         #expect(viewModel.mailboxes.first { $0.id == inbox.id }?.unreadCount == 1)
         #expect(mailService.fetchedOlderHeaderRequests.first?.beforeUID == 101)
-        #expect(mailService.fetchedOlderHeaderRequests.count >= 2)
+        #expect(mailService.fetchedOlderHeaderRequests.count == 1)
     }
 
     @MainActor
     @Test func imapRefreshAlsoSynchronizesJunkMailbox() async throws {
         let account = MailAccount.demo()
         let inbox = Mailbox(id: UUID(), accountId: account.id, name: "INBOX", role: .inbox, uidValidity: 1, unreadCount: 0)
+        let archive = Mailbox(id: UUID(), accountId: account.id, name: "Archive", role: .archive, uidValidity: 1, unreadCount: 0)
         let junk = Mailbox(id: UUID(), accountId: account.id, name: "Junk Mail", role: .junk, uidValidity: 1, unreadCount: 0)
-        let store = MemoryMailStore(snapshot: MailStoreSnapshot(accounts: [account], mailboxes: [inbox, junk], messages: [], attachments: []))
+        let drafts = Mailbox(id: UUID(), accountId: account.id, name: "Drafts", role: .drafts, uidValidity: 1, unreadCount: 0)
+        let trash = Mailbox(id: UUID(), accountId: account.id, name: "Trash", role: .trash, uidValidity: 1, unreadCount: 0)
+        let store = MemoryMailStore(snapshot: MailStoreSnapshot(accounts: [account], mailboxes: [inbox, archive, junk, drafts, trash], messages: [], attachments: []))
         let mailService = StubMailService(body: MessageBody(plain: "", html: nil, attachments: []))
-        mailService.mailboxesToReturn = [inbox, junk]
+        mailService.mailboxesToReturn = [inbox, archive, junk, drafts, trash]
         mailService.headersByMailboxID = [
             inbox.id: [
                 MessageHeader(uid: 11, messageId: "<inbox@example.com>", subject: "Inbox", fromAddress: "inbox@example.com", fromName: "Inbox", date: Date(timeIntervalSince1970: 11), receivedDate: Date(timeIntervalSince1970: 11), flags: [])
             ],
+            archive.id: [
+                MessageHeader(uid: 31, messageId: "<archive@example.com>", subject: "Archive", fromAddress: "archive@example.com", fromName: "Archive", date: Date(timeIntervalSince1970: 31), receivedDate: Date(timeIntervalSince1970: 31), flags: [.seen])
+            ],
             junk.id: [
                 MessageHeader(uid: 21, messageId: "<junk@example.com>", subject: "Junk", fromAddress: "junk@example.com", fromName: "Junk", date: Date(timeIntervalSince1970: 21), receivedDate: Date(timeIntervalSince1970: 21), flags: [])
+            ],
+            drafts.id: [
+                MessageHeader(uid: 41, messageId: "<draft@example.com>", subject: "Draft", fromAddress: "draft@example.com", fromName: "Draft", date: Date(timeIntervalSince1970: 41), flags: [])
+            ],
+            trash.id: [
+                MessageHeader(uid: 51, messageId: "<trash@example.com>", subject: "Trash", fromAddress: "trash@example.com", fromName: "Trash", date: Date(timeIntervalSince1970: 51), flags: [])
             ]
         ]
         let viewModel = MailAppViewModel(
@@ -283,14 +302,20 @@ struct myMailTests {
         viewModel.selectedMailboxID = inbox.id
 
         viewModel.refresh()
-        for _ in 0..<50 where viewModel.messages.count < 2 {
+        for _ in 0..<50 where viewModel.messages.count < 3 {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
 
         #expect(viewModel.messages.contains { $0.mailboxId == inbox.id && $0.uid == 11 })
+        #expect(viewModel.messages.contains { $0.mailboxId == archive.id && $0.uid == 31 })
         #expect(viewModel.messages.contains { $0.mailboxId == junk.id && $0.uid == 21 })
+        #expect(!viewModel.messages.contains { $0.mailboxId == drafts.id && $0.uid == 41 })
+        #expect(!viewModel.messages.contains { $0.mailboxId == trash.id && $0.uid == 51 })
         #expect(mailService.fetchedHeaderMailboxIDs.contains(inbox.id))
+        #expect(mailService.fetchedHeaderMailboxIDs.contains(archive.id))
         #expect(mailService.fetchedHeaderMailboxIDs.contains(junk.id))
+        #expect(!mailService.fetchedHeaderMailboxIDs.contains(drafts.id))
+        #expect(!mailService.fetchedHeaderMailboxIDs.contains(trash.id))
     }
 
     @MainActor
@@ -772,7 +797,7 @@ struct myMailTests {
         let authURL = try #require(viewModel.startOAuthLogin(
             provider: .gmail,
             email: "oauth@example.com",
-            clientID: "client-id",
+            clientID: "1234567890-test.apps.googleusercontent.com",
             useProtocol: .imap
         ))
         let state = try #require(URLComponents(url: authURL, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "state" }?.value)
@@ -1875,6 +1900,59 @@ struct myMailTests {
         #expect(viewModel.attachments.first?.filename == "sent.txt")
         #expect(store.savedSnapshots.last?.messages.first?.subject == "发送缓存测试")
         #expect(store.savedSnapshots.last?.attachments.first?.localPath == attachmentURL.path)
+    }
+
+    @MainActor
+    @Test func sendDraftCanUseAnotherAccountsSendingRoute() async throws {
+        var draftAccount = MailAccount.demo()
+        draftAccount.emailAddress = "reader@example.com"
+        draftAccount.displayName = "Reader"
+        var sendingAccount = MailAccount.demo()
+        sendingAccount.id = UUID()
+        sendingAccount.emailAddress = "sender@example.com"
+        sendingAccount.displayName = "Sender"
+        let draftMailboxes = Mailbox.demoSet(accountId: draftAccount.id)
+        let sendingMailboxes = Mailbox.demoSet(accountId: sendingAccount.id)
+        let sendingSentMailbox = try #require(sendingMailboxes.first { $0.role == .sent })
+        let store = MemoryMailStore(snapshot: MailStoreSnapshot(
+            accounts: [draftAccount, sendingAccount],
+            mailboxes: draftMailboxes + sendingMailboxes,
+            messages: [],
+            attachments: []
+        ))
+        let mailService = StubMailService(body: MessageBody(plain: "", html: nil, attachments: []))
+        let viewModel = MailAppViewModel(
+            secretStore: MemorySecretStore(),
+            mailStore: store,
+            settingsStore: MemorySettingsStore(),
+            mailService: mailService,
+            aiService: StubAIService(chunks: []),
+            vectorStore: InMemoryVectorStore(),
+            embeddingService: LocalNLEmbeddingService(),
+            autoBootstrapEmbeddings: false
+        )
+        viewModel.selectedAccountID = draftAccount.id
+        viewModel.composeDraft = ComposeDraft(
+            to: "recipient@example.com",
+            cc: "",
+            subject: "跨账号发信",
+            body: "正文",
+            instruction: "",
+            attachmentURLs: [],
+            sendingAccountID: sendingAccount.id
+        )
+
+        viewModel.sendDraft()
+        for _ in 0..<50 where mailService.sentDrafts.isEmpty {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        #expect(mailService.sentAccountID == sendingAccount.id)
+        #expect(mailService.sentMailboxID == sendingSentMailbox.id)
+        let sentMessage = try #require(viewModel.messages.first { $0.mailboxId == sendingSentMailbox.id })
+        #expect(sentMessage.accountId == sendingAccount.id)
+        #expect(sentMessage.fromAddress == sendingAccount.emailAddress)
+        #expect(sentMessage.subject == "跨账号发信")
     }
 
     @MainActor
@@ -3397,6 +3475,7 @@ final class StubMailService: MailService {
     var fetchedMailboxID: UUID?
     var fetchedUID: Int64?
     var sentDrafts: [OutgoingMessage] = []
+    var sentAccountID: UUID?
     var savedDrafts: [OutgoingMessage] = []
     var savedDraftMailboxID: UUID?
     var sentMailboxID: UUID?
@@ -3532,6 +3611,7 @@ final class StubMailService: MailService {
 
     func sendMessage(_ draft: OutgoingMessage, appendTo sentMailbox: Mailbox?) async throws {
         sentDrafts.append(draft)
+        sentAccountID = connectedAccountID
         sentMailboxID = sentMailbox?.id
     }
 

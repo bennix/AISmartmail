@@ -352,6 +352,7 @@ struct ComposeDraft: Codable, Hashable {
     var body: String = ""
     var instruction: String = ""
     var attachmentURLs: [URL] = []
+    var sendingAccountID: UUID?
 }
 
 struct ChatMessage: Codable, Hashable, Sendable {
