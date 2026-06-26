@@ -1830,7 +1830,7 @@ final class MailAppViewModel: ObservableObject {
             aiAnswer = SearchAnswer(question: question, answer: configurationMessage, citations: [])
             return
         }
-        let vectorizedMessages = messages.filter { $0.embeddingState == .done }
+        let vectorizedMessages = currentMailboxScopeMessages().filter { $0.embeddingState == .done }
         guard !vectorizedMessages.isEmpty else {
             let message = SearchService.missingVectorIndexMessage(language: settings.interfaceLanguage)
             statusMessage = message
@@ -1860,6 +1860,14 @@ final class MailAppViewModel: ObservableObject {
 
     private func makeSearchService() -> SearchService {
         SearchService(embeddingService: resolvedEmbeddingService(), vectorStore: vectorStore, aiService: aiService)
+    }
+
+    private func currentMailboxScopeMessages() -> [MailMessage] {
+        if selectedSmartMailbox == .starred {
+            return messages.filter { $0.flags.contains(.flagged) }
+        }
+        guard let selectedAccountID, let selectedMailboxID else { return [] }
+        return messages.filter { $0.accountId == selectedAccountID && $0.mailboxId == selectedMailboxID }
     }
 
     private func resolvedEmbeddingService() -> EmbeddingService {
@@ -2679,23 +2687,26 @@ final class MailAppViewModel: ObservableObject {
         settings.vectorizationConsentAccepted = true
         showsVectorizationPrivacyPrompt = false
 
-        guard !messages.isEmpty else {
+        let scopedMessageIDs = Set(currentMailboxScopeMessages().map(\.id))
+        guard !scopedMessageIDs.isEmpty else {
             statusMessage = localized(.vectorizationNoMessages)
             vectorizationProgress = nil
             return
         }
 
-        let total = messages.count
+        let total = scopedMessageIDs.count
         vectorizationProgress = VectorizationProgress(total: total, completed: 0, failed: 0, isActive: true)
         for index in messages.indices {
-            messages[index].embeddingState = .pending
+            if scopedMessageIDs.contains(messages[index].id) {
+                messages[index].embeddingState = .pending
+            }
         }
         persistSnapshot()
 
         statusMessage = localized(.vectorizationQueueInitialized, total)
-        await processAllPendingEmbeddings(batchSize: batchSize, progressTotal: total)
+        await processAllPendingEmbeddings(batchSize: batchSize, allowedMessageIDs: scopedMessageIDs, progressTotal: total)
 
-        let failedCount = messages.filter { $0.embeddingState == .failed }.count
+        let failedCount = messages.filter { scopedMessageIDs.contains($0.id) && $0.embeddingState == .failed }.count
         vectorizationProgress = VectorizationProgress(total: total, completed: total - failedCount, failed: failedCount, isActive: false)
         if failedCount > 0 {
             statusMessage = localized(.vectorizationCompletedWithFailures, failedCount)
@@ -2704,20 +2715,20 @@ final class MailAppViewModel: ObservableObject {
         }
     }
 
-    private func processAllPendingEmbeddings(batchSize: Int = 16, progressTotal: Int? = nil) async {
+    private func processAllPendingEmbeddings(batchSize: Int = 16, allowedMessageIDs: Set<UUID>? = nil, progressTotal: Int? = nil) async {
         let safeBatchSize = max(batchSize, 1)
-        while messages.contains(where: { $0.embeddingState == .pending }) {
-            let pendingCount = messages.filter { $0.embeddingState == .pending }.count
+        while messages.contains(where: { $0.embeddingState == .pending && (allowedMessageIDs?.contains($0.id) ?? true) }) {
+            let pendingCount = messages.filter { $0.embeddingState == .pending && (allowedMessageIDs?.contains($0.id) ?? true) }.count
             if let progressTotal {
-                let failedCount = messages.filter { $0.embeddingState == .failed }.count
+                let failedCount = messages.filter { $0.embeddingState == .failed && (allowedMessageIDs?.contains($0.id) ?? true) }.count
                 let completedCount = max(progressTotal - pendingCount - failedCount, 0)
                 vectorizationProgress = VectorizationProgress(total: progressTotal, completed: completedCount, failed: failedCount, isActive: true)
             }
             await Task.yield()
-            await processPendingEmbeddings(batchSize: safeBatchSize)
-            let remainingCount = messages.filter { $0.embeddingState == .pending }.count
+            await processPendingEmbeddings(batchSize: safeBatchSize, allowedMessageIDs: allowedMessageIDs)
+            let remainingCount = messages.filter { $0.embeddingState == .pending && (allowedMessageIDs?.contains($0.id) ?? true) }.count
             if let progressTotal {
-                let failedCount = messages.filter { $0.embeddingState == .failed }.count
+                let failedCount = messages.filter { $0.embeddingState == .failed && (allowedMessageIDs?.contains($0.id) ?? true) }.count
                 let completedCount = max(progressTotal - remainingCount - failedCount, 0)
                 vectorizationProgress = VectorizationProgress(total: progressTotal, completed: completedCount, failed: failedCount, isActive: remainingCount > 0)
             }
@@ -2728,14 +2739,14 @@ final class MailAppViewModel: ObservableObject {
         }
     }
 
-    func processPendingEmbeddings(batchSize: Int = 16) async {
+    func processPendingEmbeddings(batchSize: Int = 16, allowedMessageIDs: Set<UUID>? = nil) async {
         guard settings.vectorizationEnabled else { return }
         settings.useLocalEmbedding = true
         settings.embeddingModel = ""
         settings.vectorizationConsentAccepted = true
 
         let pendingIDs = messages
-            .filter { $0.embeddingState == .pending }
+            .filter { $0.embeddingState == .pending && (allowedMessageIDs?.contains($0.id) ?? true) }
             .prefix(max(batchSize, 1))
             .map(\.id)
         guard !pendingIDs.isEmpty else { return }
