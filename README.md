@@ -2,6 +2,12 @@
 
 AISmartmail is a native macOS mail client built with SwiftUI. It focuses on everyday email workflows, Apple Silicon native performance, attachment handling, and AI-assisted mail retrieval without using remote embedding services.
 
+## Download
+
+[Download the latest notarized macOS DMG](https://github.com/bennix/AISmartmail/releases/latest/download/AISmartmail-macOS-universal.dmg) · [Landing page](https://bennix.github.io/AISmartMailWEB/) · [Release notes](https://github.com/bennix/AISmartmail/releases/latest)
+
+Release `v0.1.13` contains app version `1.08 (5)`, supports Apple Silicon and Intel Macs, and requires macOS 26.5 or later. The app and DMG are Developer ID signed and Apple notarized, with stapled tickets. SHA-256 checksums are included in the release.
+
 ## Highlights
 
 - Native SwiftUI macOS app with a three-column mail layout.
@@ -66,6 +72,10 @@ This repository contains an actively developed macOS mail application. The app i
 # AISmartmail 中文说明
 
 AISmartmail 是一个使用 SwiftUI 构建的原生 macOS 邮件客户端，重点是日常邮件工作流、Apple Silicon 原生运行、附件处理，以及基于本地向量化数据的 AI 邮件问答。
+
+[下载最新公证版 DMG](https://github.com/bennix/AISmartmail/releases/latest/download/AISmartmail-macOS-universal.dmg) · [产品主页](https://bennix.github.io/AISmartMailWEB/)
+
+`v0.1.13` 对应应用版本 `1.08 (5)`，支持 Apple Silicon 和 Intel，要求 macOS 26.5 或更新版本。应用和安装包均已签名、公证并附加公证凭据。本次更新修复内嵌图片显示、摘要混入 CSS 及纯文本正文选择问题。
 
 ## 主要功能
 

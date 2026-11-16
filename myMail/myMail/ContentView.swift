@@ -429,8 +429,8 @@ private struct ReadingPane: View {
     }
 
     private func html(for message: MailMessage) -> String {
-        if let bodyHTML = message.bodyHTML {
-            return bodyHTML
+        if let bodyHTML = message.bodyHTML, !bodyHTML.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return MIMEParser.resolvingInlineImages(in: bodyHTML, attachments: viewModel.attachments(for: message))
         }
 
         let text = message.bodyPlain ?? message.snippet

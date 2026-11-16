@@ -9,6 +9,57 @@ import Testing
 @testable import myMail
 
 struct myMailTests {
+    @Test func htmlOnlyMailPreviewExcludesStylesAndDecodesEntities() {
+        let body = MIMEParser.parseMessageBody("""
+        Content-Type: text/html; charset=utf-8
+
+        <html><head><title>Hidden title</title><style>body{color:red}</style></head>
+        <body><!-- hidden --><script>tracking()</script><p>Hello&nbsp;世界 &amp; &#x1F600;</p></body></html>
+        """)
+        #expect(body.plain == "Hello 世界 & 😀")
+        #expect(body.html?.contains("<style>") == true)
+    }
+
+    @Test func multipartPrefersActualPlainTextEvenWhenHTMLComesFirst() {
+        let body = MIMEParser.parseMessageBody("""
+        Content-Type: multipart/alternative; boundary=parts
+
+        --parts
+        Content-Type: text/html
+
+        <p>HTML version</p>
+        --parts
+        Content-Type: text/plain
+
+        Actual plain version
+        --parts--
+        """)
+        #expect(body.plain.trimmingCharacters(in: .whitespacesAndNewlines) == "Actual plain version")
+    }
+
+    @Test func unnamedInlineImageIsRetainedAndResolved() {
+        let body = MIMEParser.parseMessageBody("""
+        Content-Type: multipart/related; boundary=parts
+
+        --parts
+        Content-Type: text/html
+
+        <p>Hello</p><img src="cid:logo%40mail">
+        --parts
+        Content-Type: image/png
+        Content-ID: <logo@mail>
+        Content-Transfer-Encoding: base64
+
+        aW1hZ2U=
+        --parts--
+        """)
+        #expect(body.attachments.count == 1)
+        #expect(body.attachments.first?.decodedContent == Data("image".utf8))
+        let html = MIMEParser.resolvingInlineImages(in: body.html ?? "", attachments: body.attachments)
+        #expect(html.contains("src=\"data:image/png;base64,aW1hZ2U=\""))
+        #expect(MIMEParser.resolvingInlineImages(in: "<img src='cid:missing'>", attachments: []) == "<img src='cid:missing'>")
+    }
+
     @Test func appLocalizerCoversEverySupportedLanguage() {
         for language in AppLanguage.allCases {
             for key in AppText.allCases {

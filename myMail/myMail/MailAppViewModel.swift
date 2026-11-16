@@ -2622,6 +2622,19 @@ final class MailAppViewModel: ObservableObject {
         normalized.fromName = MIMEParser.decodeHeaderValue(message.fromName)
         if !message.isBodyDownloaded {
             normalized.snippet = MIMEParser.decodeHeaderValue(message.snippet)
+        } else if let html = message.bodyHTML {
+            // Repair only text produced by the old tag-only HTML fallback.
+            let oldText = html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if message.bodyPlain == oldText {
+                let text = MIMEParser.plainText(fromHTML: html)
+                if text != oldText {
+                    normalized.bodyPlain = text
+                    normalized.snippet = String(text.prefix(200))
+                    normalized.embeddingState = .pending
+                }
+            }
         }
         return normalized
     }

@@ -144,6 +144,20 @@ struct SMTPMIMEBuilder {
 }
 
 struct MIMEParser {
+    static func resolvingInlineImages(in html: String, attachments: [MailAttachment]) -> String {
+        guard let regex = try? NSRegularExpression(pattern: "(?i)cid:([^\\s\"'<>\\)]+)") else { return html }
+        var result = html
+        for match in regex.matches(in: html, range: NSRange(html.startIndex..., in: html)).reversed() {
+            let rawID = (html as NSString).substring(with: match.range(at: 1))
+            let contentID = rawID.removingPercentEncoding ?? rawID
+            guard let attachment = attachments.first(where: { $0.contentId == contentID && $0.mimeType.lowercased().hasPrefix("image/") }),
+                  let data = attachment.decodedContent ?? attachment.localPath.flatMap({ try? Data(contentsOf: URL(fileURLWithPath: $0)) }),
+                  let range = Range(match.range, in: result) else { continue }
+            result.replaceSubrange(range, with: "data:\(attachment.mimeType);base64,\(data.base64EncodedString())")
+        }
+        return result
+    }
+
     private struct Part {
         var headers: [String: String]
         var body: String
@@ -167,7 +181,7 @@ struct MIMEParser {
             }
         }
 
-        return MessageBody(plain: plain ?? "", html: html, attachments: attachments)
+        return MessageBody(plain: plain ?? html.map(plainText(fromHTML:)) ?? "", html: html, attachments: attachments)
     }
 
     private static func collect(part: Part, plain: inout String?, html: inout String?, attachments: inout [MailAttachment]) {
@@ -184,11 +198,13 @@ struct MIMEParser {
         let decodedData = decodedBodyData(part.body, transferEncoding: part.headers["content-transfer-encoding"])
 
         let attachmentName = filename?.nilIfEmpty
-        if attachmentName != nil || disposition.lowercased().contains("attachment") {
+        let contentID = cleaned(part.headers["content-id"])
+        let isInlineResource = contentID != nil && !mediaType(from: contentType).lowercased().hasPrefix("text/")
+        if attachmentName != nil || disposition.lowercased().contains("attachment") || isInlineResource {
             attachments.append(MailAttachment(
                 id: UUID(),
                 messageId: UUID(),
-                filename: attachmentName ?? "attachment",
+                filename: attachmentName ?? contentID ?? "attachment",
                 mimeType: mediaType(from: contentType),
                 sizeBytes: Int64(decodedData.count),
                 localPath: nil,
@@ -201,7 +217,6 @@ struct MIMEParser {
         let text = decodedText(decodedData, contentType: contentType, fallback: part.body)
         if mediaType(from: contentType).lowercased().hasPrefix("text/html") {
             html = html ?? text
-            plain = plain ?? stripHTML(text)
         } else if mediaType(from: contentType).lowercased().hasPrefix("text/plain") {
             plain = plain ?? text
         }
@@ -620,7 +635,31 @@ struct MIMEParser {
     }
 
     private static func stripHTML(_ html: String) -> String {
-        html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        plainText(fromHTML: html)
+    }
+
+    static func plainText(fromHTML html: String) -> String {
+        let text = html
+            .replacingOccurrences(of: "(?is)<!--.*?-->", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "(?is)<(head|style|script)\\b[^>]*>.*?</\\1\\s*>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        // Decode after stripping tags so escaped angle brackets stay visible.
+        let entities = ["&nbsp;": " ", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&apos;": "'", "&amp;": "&"]
+        let pattern = "&#(x[0-9a-fA-F]+|[0-9]+);"
+        var decoded = text
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+                let value = (text as NSString).substring(with: match.range(at: 1))
+                let number = value.hasPrefix("x") ? UInt32(value.dropFirst(), radix: 16) : UInt32(value)
+                if let number, let scalar = UnicodeScalar(number), let range = Range(match.range, in: decoded) {
+                    decoded.replaceSubrange(range, with: String(scalar))
+                }
+            }
+        }
+        for entity in ["&nbsp;", "&lt;", "&gt;", "&quot;", "&apos;", "&amp;"] {
+            decoded = decoded.replacingOccurrences(of: entity, with: entities[entity]!)
+        }
+        return decoded
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
